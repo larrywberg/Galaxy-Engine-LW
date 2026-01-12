@@ -1,4 +1,5 @@
 #include "Physics/morton.h"
+#include <execution>
 
 uint64_t Morton::scaleToGrid(float pos, float minVal, float maxVal) {
     if (maxVal <= minVal) return 0;
@@ -41,20 +42,31 @@ void Morton::sortParticlesByMortonKey(
 {
     std::vector<size_t> indices(pParticles.size());
 
+#if !defined(EMSCRIPTEN)
 #pragma omp parallel for
+#endif
     for (size_t i = 0; i < indices.size(); i++) {
         indices[i] = i;
     }
 
+#if defined(EMSCRIPTEN)
+    std::sort(indices.begin(), indices.end(),
+        [&](size_t a, size_t b) {
+            return pParticles[a].mortonKey < pParticles[b].mortonKey;
+        });
+#else
     std::sort(std::execution::par, indices.begin(), indices.end(),
         [&](size_t a, size_t b) {
             return pParticles[a].mortonKey < pParticles[b].mortonKey;
         });
+#endif
 
     std::vector<ParticlePhysics> pSorted(pParticles.size());
     std::vector<ParticleRendering> rSorted(rParticles.size());
 
+#if !defined(EMSCRIPTEN)
 #pragma omp parallel for
+#endif
     for (size_t i = 0; i < indices.size(); i++) {
         size_t src_idx = indices[i];
         pSorted[i] = std::move(pParticles[src_idx]);

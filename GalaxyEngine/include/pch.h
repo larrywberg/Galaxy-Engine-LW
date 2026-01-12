@@ -30,7 +30,9 @@
 #include <cstdio>
 
 // Runtime
+#if !defined(EMSCRIPTEN)
 #include <omp.h>
+#endif
 
 // Vendor
 #include <glm.hpp>
@@ -38,14 +40,23 @@
 #include <raylib.h>
 #include <raymath.h>
 #include <rlgl.h>
+#if defined(EMSCRIPTEN)
+#include <GLES3/gl3.h>
+#else
 #include <external/glad.h>
+#endif
 
 #include <imgui.h>
 
 #include <implot.h>
 #include <implot_internal.h>
 
+#if defined(EMSCRIPTEN)
+#include "rlImGui_stub.h"
+#include "rlImGuiColors_stub.h"
+#else
 #include <rlImGui.h>
 #include <rlImGuiColors.h>
+#endif
 
 #include <yaml-cpp/yaml.h>

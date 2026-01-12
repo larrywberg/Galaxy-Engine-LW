@@ -20,7 +20,7 @@ uint32_t globalShapeId = 1;
 uint32_t globalWallId = 1;
 // If someday light id gets added, don't forget to add the id to the copy paste code too
 
-std::unordered_map<unsigned int, uint64_t> NeighborSearch::idToIndex;
+std::unordered_map<uint32_t, size_t> NeighborSearch::idToIndex;
 
 
 //void flattenQuadtree(Quadtree* node, std::vector<Quadtree*>& flatList) {
@@ -334,6 +334,7 @@ void exportPly() {
 //}
 //)";
 
+#if !defined(EMSCRIPTEN)
 const char* computeTest = R"(
 #version 430
 
@@ -662,6 +663,16 @@ void freeGPUMemory() {
 
 	glDeleteProgram(field.gravityDisplayProgram);
 }
+
+#else
+
+void buildKernels() {}
+
+void gpuGravity() {}
+
+void freeGPUMemory() {}
+
+#endif
 
 // -------- This is an unused quadtree creation method I made for learning purposes. It builds the quadtree from Morton keys -------- //
 
@@ -1654,10 +1665,14 @@ void loadConfig() {
 
 void enableMultiThreading() {
 	if (myVar.isMultiThreadingEnabled) {
+		#if !defined(EMSCRIPTEN)
 		omp_set_num_threads(myVar.threadsAmount);
+		#endif
 	}
 	else {
+		#if !defined(EMSCRIPTEN)
 		omp_set_num_threads(1);
+		#endif
 	}
 }
 
@@ -1703,6 +1718,15 @@ void fullscreenToggle(int& lastScreenWidth, int& lastScreenHeight,
 
 
 RenderTexture2D CreateFloatRenderTexture(int w, int h) {
+#if defined(EMSCRIPTEN)
+	if (w < 1) {
+		w = 1;
+	}
+	if (h < 1) {
+		h = 1;
+	}
+	return LoadRenderTexture(w, h);
+#else
 	RenderTexture2D fbo = { 0 };
 	glGenTextures(1, &fbo.texture.id);
 	glBindTexture(GL_TEXTURE_2D, fbo.texture.id);
@@ -1722,4 +1746,5 @@ RenderTexture2D CreateFloatRenderTexture(int w, int h) {
 	fbo.texture.format = PIXELFORMAT_UNCOMPRESSED_R16G16B16A16;
 
 	return fbo;
+#endif
 }

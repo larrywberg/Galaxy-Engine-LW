@@ -1,0 +1,98 @@
+{
+  "version": 3,
+  "cmakeMinimumRequired": {
+    "major": 3,
+    "minor": 26,
+    "patch": 0
+  },
+  "configurePresets": [
+    {
+      "name": "debug-macos",
+      "displayName": "Debug (macOS + Ninja)",
+      "description": "Configures a Ninja debug build using the system clang on macOS.",
+      "hidden": false,
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/build/debug-macos",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Debug",
+        "CMAKE_EXPORT_COMPILE_COMMANDS": "ON"
+      }
+    },
+    {
+      "name": "release-macos",
+      "displayName": "Release (macOS + Ninja)",
+      "description": "Configures a Ninja release build using the system clang on macOS.",
+      "hidden": false,
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/build/release-macos",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release",
+        "CMAKE_EXPORT_COMPILE_COMMANDS": "ON"
+      }
+    },
+    {
+      "name": "wasm-debug",
+      "displayName": "WebAssembly Debug (Ninja)",
+      "description": "Configures a debug Emscripten build; invoke via emcmake.",
+      "hidden": false,
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/build/wasm-debug",
+        "cacheVariables": {
+          "CMAKE_BUILD_TYPE": "Debug",
+          "CMAKE_EXPORT_COMPILE_COMMANDS": "ON"
+          ,
+          "CMAKE_SYSTEM_NAME": "Emscripten",
+          "CMAKE_C_COMPILER": "/Users/larryweinberg/dev/emsdk/emsdk/upstream/emscripten/emcc",
+          "CMAKE_CXX_COMPILER": "/Users/larryweinberg/dev/emsdk/emsdk/upstream/emscripten/em++",
+          "CMAKE_AR": "/Users/larryweinberg/dev/emsdk/emsdk/upstream/bin/emar",
+          "CMAKE_RANLIB": "/Users/larryweinberg/dev/emsdk/emsdk/upstream/bin/emranlib"
+          ,
+          "CMAKE_POLICY_VERSION_MINIMUM": "3.5"
+          ,
+          "CMAKE_EXE_LINKER_FLAGS": "",
+          "CMAKE_SHARED_LINKER_FLAGS": "",
+          "CMAKE_MODULE_LINKER_FLAGS": "",
+          "CMAKE_C_LINK_FLAGS": "",
+          "CMAKE_CXX_LINK_FLAGS": ""
+        }
+      },
+    {
+      "name": "wasm-release",
+      "displayName": "WebAssembly Release (Ninja)",
+      "description": "Configures a release Emscripten build; invoke via emcmake.",
+      "hidden": false,
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/build/wasm-release",
+        "cacheVariables": {
+          "CMAKE_BUILD_TYPE": "Release",
+          "CMAKE_EXPORT_COMPILE_COMMANDS": "ON"
+          ,
+          "CMAKE_POLICY_VERSION_MINIMUM": "3.5"
+          ,
+          "CMAKE_EXE_LINKER_FLAGS": "",
+          "CMAKE_SHARED_LINKER_FLAGS": "",
+          "CMAKE_MODULE_LINKER_FLAGS": "",
+          "CMAKE_C_LINK_FLAGS": "",
+          "CMAKE_CXX_LINK_FLAGS": ""
+        }
+      }
+  ],
+  "buildPresets": [
+    {
+      "name": "debug-macos",
+      "configurePreset": "debug-macos"
+    },
+    {
+      "name": "release-macos",
+      "configurePreset": "release-macos"
+    },
+    {
+      "name": "wasm-debug",
+      "configurePreset": "wasm-debug"
+    },
+    {
+      "name": "wasm-release",
+      "configurePreset": "wasm-release"
+    }
+  ]
+}

@@ -36,6 +36,14 @@ struct Field {
 
 	int prevRes = 150;
 
+	float hue = 180.0f;
+	float saturation = 0.8f;
+	float value = 0.5f;
+
+	float gravityStretchFactor = 90.0f;
+	bool gravityCustomColors = false;
+	float gravityExposure = 3.0f;
+
 	void initializeCells(UpdateVariables& myVar) {
 
 		if (prevDomainSize != myVar.domainSize) {
@@ -167,7 +175,8 @@ void main() {
 )";
 
 
-	const char* fieldFragmentShader = R"(
+	#if !defined(EMSCRIPTEN)
+const char* fieldFragmentShader = R"(
 #version 430
 
 layout(std430, binding = 9) buffer CellsData {
@@ -409,16 +418,6 @@ void main()
 		glUnmapBuffer(GL_SHADER_STORAGE_BUFFER);
 	}
 
-	float hue = 180.0f;
-	float saturation = 0.8f;
-	float value = 0.5f;
-
-	float gravityStretchFactor = 90.0f;
-
-	bool gravityCustomColors = false;
-
-	float gravityExposure = 3.0f;
-
 	void drawField(UpdateParameters& myParam, UpdateVariables& myVar)
 	{
 		BeginMode2D(myParam.myCamera.camera);
@@ -467,4 +466,10 @@ void main()
 		EndShaderMode();
 		EndMode2D();
 	}
+#else
+    inline void fieldGravityDisplayKernel() {}
+    inline void gpuGravityDisplay(UpdateParameters&, UpdateVariables&) {}
+    inline void drawField(UpdateParameters&, UpdateVariables&) {}
+#endif
+
 };

@@ -9,16 +9,19 @@ set(IMPLOT_URL https://github.com/epezent/implot/archive/refs/heads/master.zip)
 FetchContent_Declare(implot-fetch URL ${IMPLOT_URL})
 FetchContent_MakeAvailable(implot-fetch)
 
-set(RLGUI_URL https://github.com/raylib-extras/rlImGui/archive/refs/heads/main.zip)
-
-FetchContent_Declare(rlgui-fetch URL ${RLGUI_URL})
-FetchContent_MakeAvailable(rlgui-fetch)
+if(NOT EMSCRIPTEN)
+	set(RLGUI_URL https://github.com/raylib-extras/rlImGui/archive/refs/heads/main.zip)
+	FetchContent_Declare(rlgui-fetch URL ${RLGUI_URL})
+	FetchContent_MakeAvailable(rlgui-fetch)
+endif()
 
 add_library(imgui STATIC)
 
 target_include_directories(imgui PUBLIC ${imgui-fetch_SOURCE_DIR})
 target_include_directories(imgui PUBLIC ${implot-fetch_SOURCE_DIR})
-target_include_directories(imgui PUBLIC ${rlgui-fetch_SOURCE_DIR})
+if(NOT EMSCRIPTEN)
+	target_include_directories(imgui PUBLIC ${rlgui-fetch_SOURCE_DIR})
+endif()
 
 target_sources(
 	imgui PRIVATE
@@ -32,6 +35,8 @@ target_sources(
 	${implot-fetch_SOURCE_DIR}/implot.cpp
 	${implot-fetch_SOURCE_DIR}/implot_items.cpp)
 
-target_sources(imgui PRIVATE ${rlgui-fetch_SOURCE_DIR}/rlImGui.cpp)
+if(NOT EMSCRIPTEN)
+	target_sources(imgui PRIVATE ${rlgui-fetch_SOURCE_DIR}/rlImGui.cpp)
+endif()
 
 target_link_libraries(imgui PUBLIC raylib-lib)

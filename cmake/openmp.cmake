@@ -1,3 +1,8 @@
+if(EMSCRIPTEN)
+    add_library(openmp INTERFACE)
+    return()
+endif()
+
 if(${CMAKE_VERSION} LESS 3.30 AND ${CMAKE_CXX_COMPILER_FRONTEND_VARIANT} STREQUAL MSVC)
 	add_library(openmp INTERFACE)
 

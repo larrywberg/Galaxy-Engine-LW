@@ -53,7 +53,13 @@ int main(int argc, char** argv) {
 
 	Texture2D particleBlurTex = LoadTexture("Textures/ParticleBlur.png");
 
+#if defined(EMSCRIPTEN)
+	Shader myBloom = { 0 };
+	const bool useBloom = false;
+#else
 	Shader myBloom = LoadShader(nullptr, "Shaders/bloom.fs");
+	const bool useBloom = true;
+#endif
 
 	RenderTexture2D myParticlesTexture = CreateFloatRenderTexture(GetScreenWidth(), GetScreenHeight());
 	RenderTexture2D myRayTracingTexture = CreateFloatRenderTexture(GetScreenWidth(), GetScreenHeight());
@@ -201,6 +207,19 @@ void main() {
 }
 )";
 
+#if defined(EMSCRIPTEN)
+	const bool useAccumulationShader = false;
+	Shader accumulationShader = { 0 };
+	int screenSizeLoc = -1;
+	int rayTextureLoc = -1;
+	int currentFrameLoc = -1;
+	int accumulatedFrameLoc = -1;
+	int sampleCountLoc = -1;
+	RenderTexture2D accumulatedTexture = CreateFloatRenderTexture(GetScreenWidth(), GetScreenHeight());
+	RenderTexture2D pingPongTexture = { 0 };
+	RenderTexture2D testSampleTexture = { 0 };
+#else
+	const bool useAccumulationShader = true;
 	Shader accumulationShader = LoadShaderFromMemory(accumulationVs, accumulationFs);
 
 	int screenSizeLoc = GetShaderLocation(accumulationShader, "screenSize");
@@ -219,6 +238,7 @@ void main() {
 	int accumulatedFrameLoc = GetShaderLocation(accumulationShader, "accumulatedFrame");
 	int sampleCountLoc = GetShaderLocation(accumulationShader, "sampleCount");
 	RenderTexture2D testSampleTexture = LoadRenderTexture(GetScreenWidth(), GetScreenHeight());
+#endif
 
 	int prevScreenWidth = GetScreenWidth();
 	int prevScreenHeight = GetScreenHeight();
@@ -278,11 +298,11 @@ void main() {
 
 		//------------------------ RENDER TEXTURES BELOW ------------------------//
 
-		if (myVar.isGlowEnabled) {
+		if (useBloom && myVar.isGlowEnabled) {
 			BeginShaderMode(myBloom);
 		}
 
-		if (myVar.isGlowEnabled) {
+		if (useBloom && myVar.isGlowEnabled) {
 			EndShaderMode();
 		}
 
@@ -296,38 +316,40 @@ void main() {
 			prevLongExpFlag = myVar.longExposureFlag;
 		}
 
-		if (myVar.isOpticsEnabled) {
+		if (useAccumulationShader && myVar.isOpticsEnabled) {
 			accumulationCondition = lighting.currentSamples <= lighting.maxSamples;
 		}
-		else if (myVar.longExposureFlag) {
+		else if (useAccumulationShader && myVar.longExposureFlag) {
 			accumulationCondition = myVar.longExposureCurrent <= myVar.longExposureDuration;
 		}
 		else {
-			accumulationCondition = true;
+			accumulationCondition = useAccumulationShader;
 		}
 
 		if (GetScreenWidth() != prevScreenWidth || GetScreenHeight() != prevScreenHeight) {
 
 			UnloadRenderTexture(accumulatedTexture);
+			accumulatedTexture = CreateFloatRenderTexture(GetScreenWidth(), GetScreenHeight());
+#if !defined(EMSCRIPTEN)
 			UnloadRenderTexture(pingPongTexture);
 			UnloadRenderTexture(testSampleTexture);
 
-			accumulatedTexture = CreateFloatRenderTexture(GetScreenWidth(), GetScreenHeight());
 			pingPongTexture = CreateFloatRenderTexture(GetScreenWidth(), GetScreenHeight());
 			testSampleTexture = LoadRenderTexture(GetScreenWidth(), GetScreenHeight());
 
 			screenSize[0] = (float)GetScreenWidth();
 			screenSize[1] = (float)GetScreenHeight();
 			SetShaderValue(accumulationShader, screenSizeLoc, screenSize, SHADER_UNIFORM_VEC2);
+#endif
 
 			prevScreenWidth = GetScreenWidth();
 			prevScreenHeight = GetScreenHeight();
 
-			if (myVar.isOpticsEnabled) {
+			if (useAccumulationShader && myVar.isOpticsEnabled) {
 				lighting.shouldRender = true;
 			}
 
-			if (myVar.longExposureFlag) {
+			if (useAccumulationShader && myVar.longExposureFlag) {
 				myVar.longExposureFlag = false;
 			}
 		}
@@ -378,6 +400,17 @@ void main() {
 				myVar.longExposureCurrent++;
 			}
 		}
+#if defined(EMSCRIPTEN)
+		BeginTextureMode(accumulatedTexture);
+		ClearBackground(BLACK);
+		DrawTextureRec(
+			myParticlesTexture.texture,
+			Rectangle{ 0, 0, (float)GetScreenWidth(), -((float)GetScreenHeight()) },
+			Vector2{ 0, 0 },
+			WHITE
+		);
+		EndTextureMode();
+#endif
 
 		DrawTextureRec(
 			accumulatedTexture.texture,
@@ -424,7 +457,10 @@ void main() {
 	rlImGuiShutdown();
 	ImPlot::DestroyContext();
 
+#if !defined(EMSCRIPTEN)
 	UnloadShader(myBloom);
+	UnloadShader(accumulationShader);
+#endif
 	UnloadTexture(particleBlurTex);
 
 	UnloadRenderTexture(myParticlesTexture);
@@ -437,7 +473,10 @@ void main() {
 	geSound.unloadSounds();
 
 	// Unload accumulation shader
-	UnloadShader(accumulationShader);
+#if !defined(EMSCRIPTEN)
+	UnloadRenderTexture(pingPongTexture);
+	UnloadRenderTexture(testSampleTexture);
+#endif
 
 	// Free compute shader memory
 	freeGPUMemory();

@@ -102,6 +102,8 @@ Result:
 - A C++ compiler: Any compiler is probably gonna work, but Clang is recommended as it's known to produce a faster binary than GCC for this project.
   - [Clang](https://clang.llvm.org/): On Linux, you may install the `clang` package from a package manager. On Windows, it can be installed from [their website](https://clang.llvm.org/get_started.html), the [Chocolatey llvm package](https://community.chocolatey.org/packages/llvm), or from the Visual Studio Installer: 
 
+- [FFmpeg](https://ffmpeg.org/): Install via your package manager (`brew install ffmpeg` on macOS, `apt install ffmpeg` on Debian/Ubuntu, etc.) so the build can use system headers and libraries; the CMake script will automatically detect the installation before attempting to download the bundled prebuilt.
+
     ![image](https://github.com/user-attachments/assets/b46a0e7d-188e-43a3-bf7e-fb3edced233a)
 
 ### Basic instructions
@@ -111,3 +113,9 @@ These instructions assume you have already met the above requirements.
 - Build the project with CMake
 - After doing this you should have the executable file inside the build folder
 - The last step is running the executable file from the same working directory as the "Textures" folder (otherwise the particles won't be visible). This applies to the "Shaders" and "fonts" folder as well
+
+### WebAssembly build (Emscripten)
+
+- Install the [emsdk](https://emscripten.org/docs/getting_started/downloads.html) toolchain, then run `source /path/to/emsdk_env.sh` so `emcmake`/`emmake` are on your `PATH`.
+- Configure with `emcmake cmake --preset wasm-debug` (or `wasm-release`) and then `cmake --build --preset wasm-debug` to generate the HTML/JS/WASM trio under `build/wasm-debug`.
+- The wasm build already skips the FFmpeg bundle and only uses Raylib, ImGui, GLM, etc., so you can serve the output with `emrun`/`python3 -m http.server` or plug it into a Next.js shell once the UI is ready.

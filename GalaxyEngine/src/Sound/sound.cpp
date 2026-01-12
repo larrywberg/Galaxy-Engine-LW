@@ -19,6 +19,9 @@ std::vector<Sound> GESound::soundButtonDisablePool;
 std::vector<Sound> GESound::soundSliderSlidePool;
 
 void GESound::loadSounds() {
+#if defined(EMSCRIPTEN)
+    return;
+#endif
 	InitAudioDevice();
 
 	SetMasterVolume(globalVolume);
@@ -59,6 +62,9 @@ void GESound::loadSounds() {
 }
 
 void GESound::soundtrackLogic() {
+#if defined(EMSCRIPTEN)
+    return;
+#endif
     SetMasterVolume(globalVolume);
     SetMusicVolume(currentMusic, musicVolume * musicVolMultiplier);
 
@@ -121,6 +127,9 @@ void GESound::soundtrackLogic() {
 }
 
 void GESound::unloadSounds() {
+#if defined(EMSCRIPTEN)
+    return;
+#endif
 	UnloadSound(intro);
 
 	UnloadSound(soundButtonHover1);
