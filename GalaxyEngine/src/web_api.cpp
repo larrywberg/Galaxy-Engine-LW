@@ -210,6 +210,48 @@ EMSCRIPTEN_KEEPALIVE int web_get_color_mode() {
 	return 0;
 }
 
+EMSCRIPTEN_KEEPALIVE void web_set_particle_size_multiplier(float mult) {
+	if (mult < 0.1f) {
+		mult = 0.1f;
+	}
+	if (mult > 5.0f) {
+		mult = 5.0f;
+	}
+	myVar.particleSizeMultiplier = mult;
+}
+
+EMSCRIPTEN_KEEPALIVE float web_get_particle_size_multiplier() {
+	return myVar.particleSizeMultiplier;
+}
+
+EMSCRIPTEN_KEEPALIVE void web_set_theta(float theta) {
+	if (theta < 0.1f) {
+		theta = 0.1f;
+	}
+	if (theta > 5.0f) {
+		theta = 5.0f;
+	}
+	myVar.theta = theta;
+}
+
+EMSCRIPTEN_KEEPALIVE float web_get_theta() {
+	return myVar.theta;
+}
+
+EMSCRIPTEN_KEEPALIVE void web_set_softening(float softening) {
+	if (softening < 0.5f) {
+		softening = 0.5f;
+	}
+	if (softening > 30.0f) {
+		softening = 30.0f;
+	}
+	myVar.softening = softening;
+}
+
+EMSCRIPTEN_KEEPALIVE float web_get_softening() {
+	return myVar.softening;
+}
+
 EMSCRIPTEN_KEEPALIVE void web_set_ui_hover(int hovering) {
 	myVar.isMouseNotHoveringUI = (hovering == 0);
 }

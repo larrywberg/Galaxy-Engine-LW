@@ -6,6 +6,28 @@ const html = htm.bind(React.createElement);
 
 const uiRoot = document.getElementById("ui-root");
 const root = createRoot(uiRoot);
+const STORAGE_KEY = "galaxy-engine-ui-state-v1";
+const LEFT_TABS = ["Visuals", "Physics", "Advanced Stats", "Optics", "Sound", "Recording"];
+
+function loadUiState() {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    if (!parsed || typeof parsed !== "object") return null;
+    return parsed;
+  } catch (err) {
+    return null;
+  }
+}
+
+function saveUiState(state) {
+  try {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+  } catch (err) {
+    // Ignore storage failures (private mode, quota, etc.)
+  }
+}
 
 function useWasmApi() {
   const [api, setApi] = useState(null);
@@ -76,6 +98,12 @@ function useWasmApi() {
         getWhiteTrails: wrap("web_get_white_trails", "number", []),
         setColorMode: wrap("web_set_color_mode", null, ["number"]),
         getColorMode: wrap("web_get_color_mode", "number", []),
+        setParticleSizeMultiplier: wrap("web_set_particle_size_multiplier", null, ["number"]),
+        getParticleSizeMultiplier: wrap("web_get_particle_size_multiplier", "number", []),
+        setTheta: wrap("web_set_theta", null, ["number"]),
+        getTheta: wrap("web_get_theta", "number", []),
+        setSoftening: wrap("web_set_softening", null, ["number"]),
+        getSoftening: wrap("web_get_softening", "number", []),
         setWindowSize: wrap("web_set_window_size", null, ["number", "number"]),
         setPauseAfterRecording: wrap("web_set_pause_after_recording", null, ["number"]),
         getPauseAfterRecording: wrap("web_get_pause_after_recording", "number", []),
@@ -115,7 +143,8 @@ function useWasmApi() {
   return api;
 }
 
-function Panel({ title, children, style, onHover, contentStyle = {} }) {
+function Panel({ title, children, style, onHover, contentStyle = {}, collapsed = false, onToggle }) {
+  const canToggle = typeof onToggle === "function";
   return html`
     <div
       onMouseEnter=${() => onHover(true)}
@@ -131,8 +160,26 @@ function Panel({ title, children, style, onHover, contentStyle = {} }) {
         ...style
       }}
     >
-      <div style=${{ fontSize: 14, letterSpacing: "0.16em", color: "#9fb2ff" }}>${title}</div>
-      <div style=${{ marginTop: 12, ...contentStyle }}>${children}</div>
+      <div style=${{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12 }}>
+        <div style=${{ fontSize: 14, letterSpacing: "0.16em", color: "#9fb2ff" }}>${title}</div>
+        ${canToggle &&
+        html`
+          <button
+            onClick=${onToggle}
+            style=${{
+              background: "rgba(255,255,255,0.06)",
+              border: "1px solid rgba(255,255,255,0.12)",
+              borderRadius: 6,
+              padding: "2px 8px",
+              color: "#c7d1dd",
+              cursor: "pointer"
+            }}
+          >
+            ${collapsed ? "+" : "-"}
+          </button>
+        `}
+      </div>
+      ${!collapsed && html`<div style=${{ marginTop: 12, ...contentStyle }}>${children}</div>`}
     </div>
   `;
 }
@@ -180,9 +227,12 @@ function Note({ children }) {
   return html`<div style=${{ color: "#6b7785", fontSize: 12, lineHeight: 1.4, marginBottom: 10 }}>${children}</div>`;
 }
 
-function Slider({ label, value, min, max, step, onChange }) {
+function Slider({ label, value, min, max, step, onChange, tooltip }) {
   return html`
-    <label style=${{ display: "flex", flexDirection: "column", gap: 6, marginBottom: 12 }}>
+    <label
+      style=${{ display: "flex", flexDirection: "column", gap: 6, marginBottom: 12 }}
+      title=${tooltip || ""}
+    >
       <div style=${{ display: "flex", justifyContent: "space-between" }}>
         <span>${label}</span>
         <span style=${{ color: "#9aa4b2" }}>${value.toFixed(2)}</span>
@@ -194,14 +244,18 @@ function Slider({ label, value, min, max, step, onChange }) {
         step=${step}
         value=${value}
         onChange=${(e) => onChange(Number(e.target.value))}
+        title=${tooltip || ""}
       />
     </label>
   `;
 }
 
-function IntSlider({ label, value, min, max, step, onChange }) {
+function IntSlider({ label, value, min, max, step, onChange, tooltip }) {
   return html`
-    <label style=${{ display: "flex", flexDirection: "column", gap: 6, marginBottom: 12 }}>
+    <label
+      style=${{ display: "flex", flexDirection: "column", gap: 6, marginBottom: 12 }}
+      title=${tooltip || ""}
+    >
       <div style=${{ display: "flex", justifyContent: "space-between" }}>
         <span>${label}</span>
         <span style=${{ color: "#9aa4b2" }}>${value}</span>
@@ -213,6 +267,36 @@ function IntSlider({ label, value, min, max, step, onChange }) {
         step=${step}
         value=${value}
         onChange=${(e) => onChange(Number(e.target.value))}
+        title=${tooltip || ""}
+      />
+    </label>
+  `;
+}
+
+function LogIntSlider({ label, value, max, onChange, tooltip }) {
+  const logMax = Math.log10(max + 1);
+  const sliderValue = Math.round((Math.log10(value + 1) / logMax) * 100);
+  return html`
+    <label
+      style=${{ display: "flex", flexDirection: "column", gap: 6, marginBottom: 12 }}
+      title=${tooltip || ""}
+    >
+      <div style=${{ display: "flex", justifyContent: "space-between" }}>
+        <span>${label}</span>
+        <span style=${{ color: "#9aa4b2" }}>${value}</span>
+      </div>
+      <input
+        type="range"
+        min=${0}
+        max=${100}
+        step=${1}
+        value=${sliderValue}
+        onChange=${(e) => {
+          const raw = Number(e.target.value);
+          const next = Math.round(Math.pow(10, (raw / 100) * logMax) - 1);
+          onChange(next);
+        }}
+        title=${tooltip || ""}
       />
     </label>
   `;
@@ -220,54 +304,66 @@ function IntSlider({ label, value, min, max, step, onChange }) {
 
 function App() {
   const api = useWasmApi();
-  const [timePlaying, setTimePlaying] = useState(true);
-  const [timeFactor, setTimeFactor] = useState(1.0);
-  const [timeStep, setTimeStep] = useState(1.0);
-  const [targetFps, setTargetFps] = useState(144);
-  const [gravity, setGravity] = useState(1.0);
-  const [drawQuadtree, setDrawQuadtree] = useState(false);
-  const [drawZCurves, setDrawZCurves] = useState(false);
-  const [toolDrawParticles, setToolDrawParticles] = useState(false);
-  const [toolBlackHole, setToolBlackHole] = useState(false);
-  const [toolBigGalaxy, setToolBigGalaxy] = useState(false);
-  const [toolSmallGalaxy, setToolSmallGalaxy] = useState(false);
-  const [toolStar, setToolStar] = useState(false);
-  const [toolBigBang, setToolBigBang] = useState(false);
-  const [toolPointLight, setToolPointLight] = useState(false);
-  const [toolAreaLight, setToolAreaLight] = useState(false);
-  const [toolConeLight, setToolConeLight] = useState(false);
-  const [toolWall, setToolWall] = useState(false);
-  const [toolCircle, setToolCircle] = useState(false);
-  const [toolDrawShape, setToolDrawShape] = useState(false);
-  const [toolLens, setToolLens] = useState(false);
-  const [toolMoveOptics, setToolMoveOptics] = useState(false);
-  const [toolEraseOptics, setToolEraseOptics] = useState(false);
-  const [toolSelectOptics, setToolSelectOptics] = useState(false);
-  const [glowEnabled, setGlowEnabled] = useState(false);
-  const [trailsLength, setTrailsLength] = useState(48);
-  const [trailsThickness, setTrailsThickness] = useState(0.1);
-  const [globalTrails, setGlobalTrails] = useState(false);
-  const [selectedTrails, setSelectedTrails] = useState(false);
-  const [localTrails, setLocalTrails] = useState(false);
-  const [whiteTrails, setWhiteTrails] = useState(false);
-  const [colorMode, setColorMode] = useState(0);
-  const [pauseAfterRecording, setPauseAfterRecording] = useState(false);
-  const [cleanSceneAfterRecording, setCleanSceneAfterRecording] = useState(false);
-  const [recordingTimeLimit, setRecordingTimeLimit] = useState(0);
+  const defaultColorMode = 2;
+  const defaultTrailsLength = 8;
+  const trailsLengthMax = 1500;
+  const storedStateRef = useRef(loadUiState());
+  const storedState = storedStateRef.current || {};
+  const initialActiveTab = LEFT_TABS.includes(storedState.activeParamTab)
+    ? storedState.activeParamTab
+    : "Visuals";
+  const [timePlaying, setTimePlaying] = useState(storedState.timePlaying ?? true);
+  const [timeStep, setTimeStep] = useState(storedState.timeStep ?? 1.0);
+  const [targetFps, setTargetFps] = useState(storedState.targetFps ?? 144);
+  const [gravity, setGravity] = useState(storedState.gravity ?? 1.0);
+  const [particleSizeMultiplier, setParticleSizeMultiplier] = useState(storedState.particleSizeMultiplier ?? 1.0);
+  const [theta, setTheta] = useState(storedState.theta ?? 0.8);
+  const [softening, setSoftening] = useState(storedState.softening ?? 2.5);
+  const [drawQuadtree, setDrawQuadtree] = useState(storedState.drawQuadtree ?? false);
+  const [drawZCurves, setDrawZCurves] = useState(storedState.drawZCurves ?? false);
+  const [toolDrawParticles, setToolDrawParticles] = useState(storedState.toolDrawParticles ?? false);
+  const [toolBlackHole, setToolBlackHole] = useState(storedState.toolBlackHole ?? false);
+  const [toolBigGalaxy, setToolBigGalaxy] = useState(storedState.toolBigGalaxy ?? false);
+  const [toolSmallGalaxy, setToolSmallGalaxy] = useState(storedState.toolSmallGalaxy ?? false);
+  const [toolStar, setToolStar] = useState(storedState.toolStar ?? false);
+  const [toolBigBang, setToolBigBang] = useState(storedState.toolBigBang ?? false);
+  const [toolPointLight, setToolPointLight] = useState(storedState.toolPointLight ?? false);
+  const [toolAreaLight, setToolAreaLight] = useState(storedState.toolAreaLight ?? false);
+  const [toolConeLight, setToolConeLight] = useState(storedState.toolConeLight ?? false);
+  const [toolWall, setToolWall] = useState(storedState.toolWall ?? false);
+  const [toolCircle, setToolCircle] = useState(storedState.toolCircle ?? false);
+  const [toolDrawShape, setToolDrawShape] = useState(storedState.toolDrawShape ?? false);
+  const [toolLens, setToolLens] = useState(storedState.toolLens ?? false);
+  const [toolMoveOptics, setToolMoveOptics] = useState(storedState.toolMoveOptics ?? false);
+  const [toolEraseOptics, setToolEraseOptics] = useState(storedState.toolEraseOptics ?? false);
+  const [toolSelectOptics, setToolSelectOptics] = useState(storedState.toolSelectOptics ?? false);
+  const [trailsLength, setTrailsLength] = useState(storedState.trailsLength ?? defaultTrailsLength);
+  const [trailsThickness, setTrailsThickness] = useState(storedState.trailsThickness ?? 0.1);
+  const [globalTrails, setGlobalTrails] = useState(storedState.globalTrails ?? false);
+  const [selectedTrails, setSelectedTrails] = useState(storedState.selectedTrails ?? false);
+  const [localTrails, setLocalTrails] = useState(storedState.localTrails ?? false);
+  const [whiteTrails, setWhiteTrails] = useState(storedState.whiteTrails ?? false);
+  const [colorMode, setColorMode] = useState(storedState.colorMode ?? defaultColorMode);
+  const [pauseAfterRecording, setPauseAfterRecording] = useState(storedState.pauseAfterRecording ?? false);
+  const [cleanSceneAfterRecording, setCleanSceneAfterRecording] = useState(storedState.cleanSceneAfterRecording ?? false);
+  const [recordingTimeLimit, setRecordingTimeLimit] = useState(storedState.recordingTimeLimit ?? 0);
   const [isRecording, setIsRecording] = useState(false);
   const mediaRecorderRef = useRef(null);
   const recordingChunksRef = useRef([]);
   const recordingTimerRef = useRef(null);
-  const [toolEraser, setToolEraser] = useState(false);
-  const [toolRadialForce, setToolRadialForce] = useState(false);
-  const [toolSpin, setToolSpin] = useState(false);
-  const [toolGrab, setToolGrab] = useState(false);
-  const [showControls, setShowControls] = useState(false);
-  const [showInfo, setShowInfo] = useState(false);
-  const [showTools, setShowTools] = useState(true);
-  const [showParameters, setShowParameters] = useState(true);
-  const [showStats, setShowStats] = useState(true);
-  const [activeParamTab, setActiveParamTab] = useState("Visuals");
+  const [toolEraser, setToolEraser] = useState(storedState.toolEraser ?? false);
+  const [toolRadialForce, setToolRadialForce] = useState(storedState.toolRadialForce ?? false);
+  const [toolSpin, setToolSpin] = useState(storedState.toolSpin ?? false);
+  const [toolGrab, setToolGrab] = useState(storedState.toolGrab ?? false);
+  const [showControls, setShowControls] = useState(storedState.showControls ?? false);
+  const [showInfo, setShowInfo] = useState(storedState.showInfo ?? false);
+  const [showTools, setShowTools] = useState(storedState.showTools ?? true);
+  const [showParameters, setShowParameters] = useState(storedState.showParameters ?? true);
+  const [showStats, setShowStats] = useState(storedState.showStats ?? true);
+  const [parametersCollapsed, setParametersCollapsed] = useState(storedState.parametersCollapsed ?? false);
+  const [toolsCollapsed, setToolsCollapsed] = useState(storedState.toolsCollapsed ?? false);
+  const [settingsCollapsed, setSettingsCollapsed] = useState(storedState.settingsCollapsed ?? true);
+  const [activeParamTab, setActiveParamTab] = useState(initialActiveTab);
   const [actionChoice, setActionChoice] = useState("");
   const hoverCount = useRef(0);
 
@@ -360,6 +456,8 @@ function App() {
     ],
     []
   );
+
+  const leftTabs = LEFT_TABS;
 
   const setUiHover = (hovering) => {
     if (!api) return;
@@ -474,45 +572,201 @@ function App() {
 
   useEffect(() => {
     if (!api) return;
-    setTimePlaying(api.getTimePlaying() === 1);
-    setTimeFactor(api.getTimeFactor());
-    setTimeStep(api.getTimeStepMultiplier());
-    setTargetFps(api.getTargetFps());
-    setGravity(api.getGravityMultiplier());
-    setDrawQuadtree(api.getDrawQuadtree() === 1);
-    setDrawZCurves(api.getDrawZCurves() === 1);
-    setToolDrawParticles(api.getToolDrawParticles() === 1);
-    setToolBlackHole(api.getToolBlackHole() === 1);
-    setToolBigGalaxy(api.getToolBigGalaxy() === 1);
-    setToolSmallGalaxy(api.getToolSmallGalaxy() === 1);
-    setToolStar(api.getToolStar() === 1);
-    setToolBigBang(api.getToolBigBang() === 1);
-    setToolPointLight(api.getToolPointLight() === 1);
-    setToolAreaLight(api.getToolAreaLight() === 1);
-    setToolConeLight(api.getToolConeLight() === 1);
-    setToolWall(api.getToolWall() === 1);
-    setToolCircle(api.getToolCircle() === 1);
-    setToolDrawShape(api.getToolDrawShape() === 1);
-    setToolLens(api.getToolLens() === 1);
-    setToolMoveOptics(api.getToolMoveOptics() === 1);
-    setToolEraseOptics(api.getToolEraseOptics() === 1);
-    setToolSelectOptics(api.getToolSelectOptics() === 1);
-    setGlowEnabled(false);
+
+    const stored = loadUiState() || {};
+    const hasStored = Object.keys(stored).length > 0;
+    const getBool = (key, fallback) =>
+      typeof stored[key] === "boolean" ? stored[key] : fallback;
+    const getNum = (key, fallback) =>
+      Number.isFinite(stored[key]) ? stored[key] : fallback;
+
+    const timePlayingValue = getBool("timePlaying", api.getTimePlaying() === 1);
+    setTimePlaying(timePlayingValue);
+    api.setTimePlaying(timePlayingValue ? 1 : 0);
+
+    const timeStepValue = getNum("timeStep", api.getTimeStepMultiplier());
+    setTimeStep(timeStepValue);
+    api.setTimeStepMultiplier(timeStepValue);
+
+    const targetFpsValue = getNum("targetFps", api.getTargetFps());
+    setTargetFps(targetFpsValue);
+    api.setTargetFps(targetFpsValue);
+
+    const gravityValue = getNum("gravity", api.getGravityMultiplier());
+    setGravity(gravityValue);
+    api.setGravityMultiplier(gravityValue);
+
+    const particleSizeValue = getNum("particleSizeMultiplier", api.getParticleSizeMultiplier());
+    setParticleSizeMultiplier(particleSizeValue);
+    api.setParticleSizeMultiplier(particleSizeValue);
+
+    const thetaValue = getNum("theta", api.getTheta());
+    setTheta(thetaValue);
+    api.setTheta(thetaValue);
+
+    const softeningValue = getNum("softening", api.getSoftening());
+    setSoftening(softeningValue);
+    api.setSoftening(softeningValue);
+
+    const drawQuadtreeValue = getBool("drawQuadtree", api.getDrawQuadtree() === 1);
+    setDrawQuadtree(drawQuadtreeValue);
+    api.setDrawQuadtree(drawQuadtreeValue ? 1 : 0);
+
+    const drawZCurvesValue = getBool("drawZCurves", api.getDrawZCurves() === 1);
+    setDrawZCurves(drawZCurvesValue);
+    api.setDrawZCurves(drawZCurvesValue ? 1 : 0);
+
+    const toolDrawParticlesValue = getBool("toolDrawParticles", api.getToolDrawParticles() === 1);
+    setToolDrawParticles(toolDrawParticlesValue);
+    api.setToolDrawParticles(toolDrawParticlesValue ? 1 : 0);
+
+    const toolBlackHoleValue = getBool("toolBlackHole", api.getToolBlackHole() === 1);
+    setToolBlackHole(toolBlackHoleValue);
+    api.setToolBlackHole(toolBlackHoleValue ? 1 : 0);
+
+    const toolBigGalaxyValue = getBool("toolBigGalaxy", api.getToolBigGalaxy() === 1);
+    setToolBigGalaxy(toolBigGalaxyValue);
+    api.setToolBigGalaxy(toolBigGalaxyValue ? 1 : 0);
+
+    const toolSmallGalaxyValue = getBool("toolSmallGalaxy", api.getToolSmallGalaxy() === 1);
+    setToolSmallGalaxy(toolSmallGalaxyValue);
+    api.setToolSmallGalaxy(toolSmallGalaxyValue ? 1 : 0);
+
+    const toolStarValue = getBool("toolStar", api.getToolStar() === 1);
+    setToolStar(toolStarValue);
+    api.setToolStar(toolStarValue ? 1 : 0);
+
+    const toolBigBangValue = getBool("toolBigBang", api.getToolBigBang() === 1);
+    setToolBigBang(toolBigBangValue);
+    api.setToolBigBang(toolBigBangValue ? 1 : 0);
+
+    const toolPointLightValue = getBool("toolPointLight", api.getToolPointLight() === 1);
+    setToolPointLight(toolPointLightValue);
+    api.setToolPointLight(toolPointLightValue ? 1 : 0);
+
+    const toolAreaLightValue = getBool("toolAreaLight", api.getToolAreaLight() === 1);
+    setToolAreaLight(toolAreaLightValue);
+    api.setToolAreaLight(toolAreaLightValue ? 1 : 0);
+
+    const toolConeLightValue = getBool("toolConeLight", api.getToolConeLight() === 1);
+    setToolConeLight(toolConeLightValue);
+    api.setToolConeLight(toolConeLightValue ? 1 : 0);
+
+    const toolWallValue = getBool("toolWall", api.getToolWall() === 1);
+    setToolWall(toolWallValue);
+    api.setToolWall(toolWallValue ? 1 : 0);
+
+    const toolCircleValue = getBool("toolCircle", api.getToolCircle() === 1);
+    setToolCircle(toolCircleValue);
+    api.setToolCircle(toolCircleValue ? 1 : 0);
+
+    const toolDrawShapeValue = getBool("toolDrawShape", api.getToolDrawShape() === 1);
+    setToolDrawShape(toolDrawShapeValue);
+    api.setToolDrawShape(toolDrawShapeValue ? 1 : 0);
+
+    const toolLensValue = getBool("toolLens", api.getToolLens() === 1);
+    setToolLens(toolLensValue);
+    api.setToolLens(toolLensValue ? 1 : 0);
+
+    const toolMoveOpticsValue = getBool("toolMoveOptics", api.getToolMoveOptics() === 1);
+    setToolMoveOptics(toolMoveOpticsValue);
+    api.setToolMoveOptics(toolMoveOpticsValue ? 1 : 0);
+
+    const toolEraseOpticsValue = getBool("toolEraseOptics", api.getToolEraseOptics() === 1);
+    setToolEraseOptics(toolEraseOpticsValue);
+    api.setToolEraseOptics(toolEraseOpticsValue ? 1 : 0);
+
+    const toolSelectOpticsValue = getBool("toolSelectOptics", api.getToolSelectOptics() === 1);
+    setToolSelectOptics(toolSelectOpticsValue);
+    api.setToolSelectOptics(toolSelectOpticsValue ? 1 : 0);
+
     api.setGlowEnabled(0);
-    setTrailsLength(api.getTrailsLength());
-    setTrailsThickness(api.getTrailsThickness());
-    setGlobalTrails(api.getGlobalTrails() === 1);
-    setSelectedTrails(api.getSelectedTrails() === 1);
-    setLocalTrails(api.getLocalTrails() === 1);
-    setWhiteTrails(api.getWhiteTrails() === 1);
-    setColorMode(api.getColorMode());
-    setPauseAfterRecording(api.getPauseAfterRecording() === 1);
-    setCleanSceneAfterRecording(api.getCleanSceneAfterRecording() === 1);
-    setRecordingTimeLimit(api.getRecordingTimeLimit());
-    setToolEraser(api.getToolEraser() === 1);
-    setToolRadialForce(api.getToolRadialForce() === 1);
-    setToolSpin(api.getToolSpin() === 1);
-    setToolGrab(api.getToolGrab() === 1);
+
+    const trailsLengthValue = getNum("trailsLength", hasStored ? defaultTrailsLength : api.getTrailsLength());
+    setTrailsLength(trailsLengthValue);
+    api.setTrailsLength(trailsLengthValue);
+
+    const trailsThicknessValue = getNum("trailsThickness", api.getTrailsThickness());
+    setTrailsThickness(trailsThicknessValue);
+    api.setTrailsThickness(trailsThicknessValue);
+
+    const globalTrailsValue = getBool("globalTrails", api.getGlobalTrails() === 1);
+    setGlobalTrails(globalTrailsValue);
+    api.setGlobalTrails(globalTrailsValue ? 1 : 0);
+
+    const selectedTrailsValue = getBool("selectedTrails", api.getSelectedTrails() === 1);
+    setSelectedTrails(selectedTrailsValue);
+    api.setSelectedTrails(selectedTrailsValue ? 1 : 0);
+
+    const localTrailsValue = getBool("localTrails", api.getLocalTrails() === 1);
+    setLocalTrails(localTrailsValue);
+    api.setLocalTrails(localTrailsValue ? 1 : 0);
+
+    const whiteTrailsValue = getBool("whiteTrails", api.getWhiteTrails() === 1);
+    setWhiteTrails(whiteTrailsValue);
+    api.setWhiteTrails(whiteTrailsValue ? 1 : 0);
+
+    const colorModeValue = getNum("colorMode", hasStored ? defaultColorMode : api.getColorMode());
+    setColorMode(colorModeValue);
+    api.setColorMode(colorModeValue);
+
+    const pauseAfterRecordingValue = getBool("pauseAfterRecording", api.getPauseAfterRecording() === 1);
+    setPauseAfterRecording(pauseAfterRecordingValue);
+    api.setPauseAfterRecording(pauseAfterRecordingValue ? 1 : 0);
+
+    const cleanSceneAfterRecordingValue = getBool("cleanSceneAfterRecording", api.getCleanSceneAfterRecording() === 1);
+    setCleanSceneAfterRecording(cleanSceneAfterRecordingValue);
+    api.setCleanSceneAfterRecording(cleanSceneAfterRecordingValue ? 1 : 0);
+
+    const recordingTimeLimitValue = getNum("recordingTimeLimit", api.getRecordingTimeLimit());
+    setRecordingTimeLimit(recordingTimeLimitValue);
+    api.setRecordingTimeLimit(recordingTimeLimitValue);
+
+    const toolEraserValue = getBool("toolEraser", api.getToolEraser() === 1);
+    setToolEraser(toolEraserValue);
+    api.setToolEraser(toolEraserValue ? 1 : 0);
+
+    const toolRadialForceValue = getBool("toolRadialForce", api.getToolRadialForce() === 1);
+    setToolRadialForce(toolRadialForceValue);
+    api.setToolRadialForce(toolRadialForceValue ? 1 : 0);
+
+    const toolSpinValue = getBool("toolSpin", api.getToolSpin() === 1);
+    setToolSpin(toolSpinValue);
+    api.setToolSpin(toolSpinValue ? 1 : 0);
+
+    const toolGrabValue = getBool("toolGrab", api.getToolGrab() === 1);
+    setToolGrab(toolGrabValue);
+    api.setToolGrab(toolGrabValue ? 1 : 0);
+
+    const showControlsValue = getBool("showControls", showControls);
+    setShowControls(showControlsValue);
+
+    const showInfoValue = getBool("showInfo", showInfo);
+    setShowInfo(showInfoValue);
+
+    const showToolsValue = getBool("showTools", showTools);
+    setShowTools(showToolsValue);
+
+    const showParametersValue = getBool("showParameters", showParameters);
+    setShowParameters(showParametersValue);
+
+    const showStatsValue = getBool("showStats", showStats);
+    setShowStats(showStatsValue);
+
+    const parametersCollapsedValue = getBool("parametersCollapsed", parametersCollapsed);
+    setParametersCollapsed(parametersCollapsedValue);
+
+    const toolsCollapsedValue = getBool("toolsCollapsed", toolsCollapsed);
+    setToolsCollapsed(toolsCollapsedValue);
+
+    const settingsCollapsedValue = getBool("settingsCollapsed", settingsCollapsed);
+    setSettingsCollapsed(settingsCollapsedValue);
+
+    const activeTabValue = LEFT_TABS.includes(stored.activeParamTab)
+      ? stored.activeParamTab
+      : activeParamTab;
+    setActiveParamTab(activeTabValue);
+
     api.setUiHover(0);
     window.webSetWindowSize = (width, height) => {
       api.setWindowSize(width, height);
@@ -521,6 +775,108 @@ function App() {
       window.webSyncCanvasSize();
     }
   }, [api]);
+
+  useEffect(() => {
+    saveUiState({
+      timePlaying,
+      timeStep,
+      targetFps,
+      gravity,
+      particleSizeMultiplier,
+      theta,
+      softening,
+      drawQuadtree,
+      drawZCurves,
+      toolDrawParticles,
+      toolBlackHole,
+      toolBigGalaxy,
+      toolSmallGalaxy,
+      toolStar,
+      toolBigBang,
+      toolPointLight,
+      toolAreaLight,
+      toolConeLight,
+      toolWall,
+      toolCircle,
+      toolDrawShape,
+      toolLens,
+      toolMoveOptics,
+      toolEraseOptics,
+      toolSelectOptics,
+      trailsLength,
+      trailsThickness,
+      globalTrails,
+      selectedTrails,
+      localTrails,
+      whiteTrails,
+      colorMode,
+      pauseAfterRecording,
+      cleanSceneAfterRecording,
+      recordingTimeLimit,
+      toolEraser,
+      toolRadialForce,
+      toolSpin,
+      toolGrab,
+      showControls,
+      showInfo,
+      showTools,
+      showParameters,
+      showStats,
+      parametersCollapsed,
+      toolsCollapsed,
+      settingsCollapsed,
+      activeParamTab
+    });
+  }, [
+    timePlaying,
+    timeStep,
+    targetFps,
+    gravity,
+    particleSizeMultiplier,
+    theta,
+    softening,
+    drawQuadtree,
+    drawZCurves,
+    toolDrawParticles,
+    toolBlackHole,
+    toolBigGalaxy,
+    toolSmallGalaxy,
+    toolStar,
+    toolBigBang,
+    toolPointLight,
+    toolAreaLight,
+    toolConeLight,
+    toolWall,
+    toolCircle,
+    toolDrawShape,
+    toolLens,
+    toolMoveOptics,
+    toolEraseOptics,
+    toolSelectOptics,
+    trailsLength,
+    trailsThickness,
+    globalTrails,
+    selectedTrails,
+    localTrails,
+    whiteTrails,
+    colorMode,
+    pauseAfterRecording,
+    cleanSceneAfterRecording,
+    recordingTimeLimit,
+    toolEraser,
+    toolRadialForce,
+    toolSpin,
+    toolGrab,
+    showControls,
+    showInfo,
+    showTools,
+    showParameters,
+    showStats,
+    parametersCollapsed,
+    toolsCollapsed,
+    settingsCollapsed,
+    activeParamTab
+  ]);
 
   useEffect(() => {
     const handlePointerMove = (event) => {
@@ -583,29 +939,44 @@ function App() {
             boxSizing: "border-box"
           }}
         >
+          <div
+            style=${{
+              pointerEvents: "auto",
+              background: "rgba(12, 15, 22, 0.9)",
+              border: "1px solid rgba(255,255,255,0.08)",
+              borderRadius: 12,
+              padding: 10
+            }}
+          >
+            <div style=${{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+              ${leftTabs.map(
+                (tab) => html`
+                  <button
+                    key=${tab}
+                    onClick=${() => setActiveParamTab(tab)}
+                    style=${{
+                      padding: "6px 10px",
+                      borderRadius: 999,
+                      border: "1px solid rgba(255,255,255,0.12)",
+                      background: activeParamTab === tab ? "rgba(159,178,255,0.25)" : "transparent",
+                      color: activeParamTab === tab ? "#e6edf3" : "#9aa4b2",
+                      cursor: "pointer"
+                    }}
+                  >
+                    ${tab}
+                  </button>
+                `
+              )}
+            </div>
+          </div>
           ${showParameters &&
           html`
-            <${Panel} title="PARAMETERS" onHover=${updateHover} style=${{ pointerEvents: "auto" }}>
-              <div style=${{ display: "flex", flexWrap: "wrap", gap: 6, marginBottom: 12 }}>
-                ${["Visuals", "Physics", "Advanced Stats", "Optics", "Sound", "Recording"].map(
-                  (tab) => html`
-                    <button
-                      key=${tab}
-                      onClick=${() => setActiveParamTab(tab)}
-                      style=${{
-                        padding: "6px 10px",
-                        borderRadius: 999,
-                        border: "1px solid rgba(255,255,255,0.12)",
-                        background: activeParamTab === tab ? "rgba(159,178,255,0.25)" : "transparent",
-                        color: activeParamTab === tab ? "#e6edf3" : "#9aa4b2",
-                        cursor: "pointer"
-                      }}
-                    >
-                      ${tab}
-                    </button>
-                  `
-                )}
-              </div>
+            <${Panel}
+              title="PARAMETERS"
+              onHover=${updateHover}
+              collapsed=${parametersCollapsed}
+              onToggle=${() => setParametersCollapsed(!parametersCollapsed)}
+            >
               ${activeParamTab === "Visuals" &&
               html`
                 <${SectionTitle}>Color Mode</${SectionTitle}>
@@ -631,13 +1002,17 @@ function App() {
                     )}
                   </select>
                 </label>
-                <${SectionTitle}>Render</${SectionTitle}>
-                <${Toggle}
-                  label="Glow"
-                  value=${glowEnabled}
+                <${SectionTitle}>Particles</${SectionTitle}>
+                <${Slider}
+                  label="Particle Size"
+                  value=${particleSizeMultiplier}
+                  min=${0.1}
+                  max=${5}
+                  step=${0.05}
+                  tooltip="Visual sharpness: larger sizes make particles softer and heavier on fill rate."
                   onChange=${(val) => {
-                    setGlowEnabled(val);
-                    api?.setGlowEnabled(val ? 1 : 0);
+                    setParticleSizeMultiplier(val);
+                    api?.setParticleSizeMultiplier(val);
                   }}
                 />
                 <${SectionTitle}>Trails</${SectionTitle}>
@@ -681,12 +1056,11 @@ function App() {
                     api?.setWhiteTrails(val ? 1 : 0);
                   }}
                 />
-                <${IntSlider}
+                <${LogIntSlider}
                   label="Trails Length"
                   value=${trailsLength}
-                  min=${0}
-                  max=${1500}
-                  step=${1}
+                  max=${trailsLengthMax}
+                  tooltip="Performance/clarity: longer trails are blurrier and cost more to render."
                   onChange=${(val) => {
                     setTrailsLength(val);
                     api?.setTrailsLength(val);
@@ -698,6 +1072,7 @@ function App() {
                   min=${0.01}
                   max=${1.5}
                   step=${0.01}
+                  tooltip="Thickness affects sharpness and fill rate; thinner is faster and cleaner."
                   onChange=${(val) => {
                     setTrailsThickness(val);
                     api?.setTrailsThickness(val);
@@ -752,20 +1127,68 @@ function App() {
                 <${Note}>Recording downloads a WebM file at 60fps.</${Note}>
               `}
               ${activeParamTab !== "Visuals" && activeParamTab !== "Recording" &&
-              html`<${Note}>${activeParamTab} parameters are not wired in the web build yet.</${Note}>`}
+              html`
+                ${activeParamTab === "Physics" &&
+                html`
+                  <${SectionTitle}>Gravity Quality</${SectionTitle}>
+                  <${Slider}
+                    label="Theta (higher = faster, less accurate)"
+                    value=${theta}
+                    min=${0.1}
+                    max=${5}
+                    step=${0.05}
+                    tooltip="Barnes-Hut quality: lower is more accurate (slower), higher is faster."
+                    onChange=${(val) => {
+                      setTheta(val);
+                      api?.setTheta(val);
+                    }}
+                  />
+                  <${Slider}
+                    label="Softening"
+                    value=${softening}
+                    min=${0.5}
+                    max=${30}
+                    step=${0.1}
+                    tooltip="Smooths gravity at short distances; higher is more stable but less sharp."
+                    onChange=${(val) => {
+                      setSoftening(val);
+                      api?.setSoftening(val);
+                    }}
+                  />
+                `}
+                <${Note}>${activeParamTab} parameters are not fully wired yet.</${Note}>
+              `}
             </${Panel}>
           `}
+        </div>
+
+        <div />
+
+        <div
+          style=${{
+            display: "flex",
+            flexDirection: "column",
+            gap: 16,
+            pointerEvents: "none",
+            background: "transparent",
+            border: "none",
+            padding: 12,
+            height: "100%",
+            boxSizing: "border-box"
+          }}
+        >
           ${showTools &&
           html`
             <${Panel}
-              title="TOOLS"
+              title="CURRENT TOOL"
               onHover=${updateHover}
+              collapsed=${toolsCollapsed}
+              onToggle=${() => setToolsCollapsed(!toolsCollapsed)}
               style=${{
                 pointerEvents: "auto",
                 display: "flex",
                 flexDirection: "column",
-                minHeight: 0,
-                flex: "1 1 auto"
+                minHeight: 0
               }}
               contentStyle=${{
                 overflow: "auto",
@@ -1058,23 +1481,6 @@ function App() {
               />
             </${Panel}>
           `}
-        </div>
-
-        <div />
-
-        <div
-          style=${{
-            display: "flex",
-            flexDirection: "column",
-            gap: 16,
-            pointerEvents: "none",
-            background: "transparent",
-            border: "none",
-            padding: 12,
-            height: "100%",
-            boxSizing: "border-box"
-          }}
-        >
           <${Panel} title="ACTIONS" onHover=${updateHover} style=${{ pointerEvents: "auto" }}>
             <label style=${{ display: "flex", flexDirection: "column", gap: 6 }}>
               <span>Quick Action</span>
@@ -1103,7 +1509,13 @@ function App() {
             </label>
             <${Note}>Runs immediately and closes after selection.</${Note}>
           </${Panel}>
-          <${Panel} title="SETTINGS" onHover=${updateHover} style=${{ pointerEvents: "auto", maxHeight: "60vh", overflow: "auto" }}>
+          <${Panel}
+            title="SETTINGS"
+            onHover=${updateHover}
+            collapsed=${settingsCollapsed}
+            onToggle=${() => setSettingsCollapsed(!settingsCollapsed)}
+            style=${{ pointerEvents: "auto", maxHeight: "60vh", overflow: "auto" }}
+          >
             <${SectionTitle}>Panels</${SectionTitle}>
             <${Toggle} label="Show Controls" value=${showControls} onChange=${setShowControls} />
             <${Toggle} label="Show Information" value=${showInfo} onChange=${setShowInfo} />
@@ -1129,22 +1541,12 @@ function App() {
               }}
             />
             <${Slider}
-              label="Time Factor"
-              value=${timeFactor}
-              min=${0}
-              max=${5}
-              step=${0.05}
-              onChange=${(val) => {
-                setTimeFactor(val);
-                api?.setTimeFactor(val);
-              }}
-            />
-            <${Slider}
               label="Time Step"
               value=${timeStep}
               min=${0.1}
               max=${5}
               step=${0.05}
+              tooltip="Simulation step size: higher is faster but less accurate."
               onChange=${(val) => {
                 setTimeStep(val);
                 api?.setTimeStepMultiplier(val);
@@ -1175,6 +1577,7 @@ function App() {
                   setTargetFps(next);
                   api?.setTargetFps(next);
                 }}
+                title="Caps render FPS; lowering can reduce CPU/GPU load."
               />
             </label>
             <${SectionTitle}>Debug</${SectionTitle}>
@@ -1203,10 +1606,6 @@ function App() {
               <div style=${{ display: "flex", justifyContent: "space-between", marginBottom: 6 }}>
                 <span>Target FPS</span>
                 <span>${targetFps}</span>
-              </div>
-              <div style=${{ display: "flex", justifyContent: "space-between", marginBottom: 6 }}>
-                <span>Time Factor</span>
-                <span>${timeFactor.toFixed(2)}</span>
               </div>
               <div style=${{ display: "flex", justifyContent: "space-between", marginBottom: 6 }}>
                 <span>Gravity Multiplier</span>

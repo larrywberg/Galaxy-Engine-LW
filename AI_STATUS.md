@@ -39,11 +39,14 @@ Notes:
 Layout/UI shell:
 - Three-column layout in `web/index.html` with a GL canvas in the middle.
 - React UI overlay in `web/ui.js` (Parameters/Tools/Actions/Settings/Stats + Controls/Info panels).
+- UI state is persisted to `localStorage` (sliders, toggles, panel states, tabs).
 
 Parameters panel:
 - Visuals: color mode, glow toggle, trails toggles, trails length/thickness.
+- Visuals: particle size multiplier (sharpness control).
+- Physics: theta and softening sliders (gravity quality/speed tradeoff).
 - Recording: pause after recording, clean scene after recording, time limit, WebM capture.
-- Other tabs (Physics/Advanced Stats/Optics/Sound) exist but are not wired yet.
+- Other tabs (Advanced Stats/Optics/Sound) exist but are not wired yet.
 
 Tools panel:
 - Particle tools: draw particles, black hole, big/small galaxy, star, big bang.
