@@ -2,15 +2,20 @@
   "name": "galaxy-engine-dev",
   "private": true,
   "scripts": {
-    "dev": "npm run wasm:build-run",
-    "release": "npm run wasm:build-run:release",
-    "wasm:configure": "emcmake cmake --preset wasm-debug -DFETCHCONTENT_UPDATES_DISCONNECTED=ON -DFETCHCONTENT_FULLY_DISCONNECTED=ON",
-    "wasm:build": "cmake --build --preset wasm-debug",
+    "wasm:clean": "rm -rf build",
+    "wasm:configure": "EM_CACHE=$PWD/build/emscripten_cache emcmake cmake --preset wasm-debug -DFETCHCONTENT_UPDATES_DISCONNECTED=ON -DFETCHCONTENT_FULLY_DISCONNECTED=ON",
+    "wasm:build": "EM_CACHE=$PWD/build/emscripten_cache cmake --build --preset wasm-debug",
     "wasm:run": "node scripts/serve-wasm.js",
     "wasm:build-run": "npm run wasm:configure && npm run wasm:build && npm run wasm:run",
-    "wasm:configure:release": "emcmake cmake --preset wasm-release -DFETCHCONTENT_UPDATES_DISCONNECTED=OFF -DFETCHCONTENT_FULLY_DISCONNECTED=OFF",
-    "wasm:build:release": "cmake --build --preset wasm-release",
+    "wasm:reconfigure": "npm run wasm:clean && EM_CACHE=$PWD/build/emscripten_cache emcmake cmake --preset wasm-debug -DFETCHCONTENT_UPDATES_DISCONNECTED=OFF -DFETCHCONTENT_FULLY_DISCONNECTED=OFF",
+    "wasm:rebuild-run": "npm run wasm:reconfigure && npm run wasm:build && npm run wasm:run",
+    "wasm:configure:release": "EM_CACHE=$PWD/build/emscripten_cache emcmake cmake --preset wasm-release -DFETCHCONTENT_UPDATES_DISCONNECTED=OFF -DFETCHCONTENT_FULLY_DISCONNECTED=OFF",
+    "wasm:build:release": "EM_CACHE=$PWD/build/emscripten_cache cmake --build --preset wasm-release",
     "wasm:run:release": "node scripts/serve-wasm.js --release",
-    "wasm:build-run:release": "npm run wasm:configure:release && npm run wasm:build:release && npm run wasm:run:release"
+    "wasm:build-run:release": "npm run wasm:configure:release && npm run wasm:build:release && npm run wasm:run:release",
+    "wasm:reconfigure:release": "npm run wasm:clean && EM_CACHE=$PWD/build/emscripten_cache emcmake cmake --preset wasm-release -DFETCHCONTENT_UPDATES_DISCONNECTED=OFF -DFETCHCONTENT_FULLY_DISCONNECTED=OFF",
+    "wasm:rebuild-run:release": "npm run wasm:reconfigure:release && npm run wasm:build:release && npm run wasm:run:release",
+    "dev": "npm run wasm:build-run",
+    "release": "npm run wasm:build-run:release"
   }
 }
