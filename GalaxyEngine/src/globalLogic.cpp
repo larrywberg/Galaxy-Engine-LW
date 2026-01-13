@@ -1509,7 +1509,7 @@ void drawScene(Texture2D& particleBlurTex, RenderTexture2D& myRayTracingTexture,
 	BeginMode2D(myParam.myCamera.camera);
 
 	myVar.mouseWorldPos = myParam.myCamera.mouseWorldPos;
-	if (!myVar.isRecording) {
+	if (myVar.showBrushCursor && !myVar.isRecording) {
 		myParam.brush.drawBrush(myVar.mouseWorldPos);
 	}
 	DrawRectangleLinesEx({ 0,0, static_cast<float>(myVar.domainSize.x), static_cast<float>(myVar.domainSize.y) }, 3, GRAY);

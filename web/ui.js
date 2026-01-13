@@ -29,6 +29,60 @@ function saveUiState(state) {
   }
 }
 
+const TAR_BLOCK_SIZE = 512;
+
+function writeTarString(buffer, offset, value, length) {
+  const str = value || "";
+  for (let i = 0; i < length; i += 1) {
+    buffer[offset + i] = i < str.length ? str.charCodeAt(i) : 0;
+  }
+}
+
+function writeTarOctal(buffer, offset, value, length) {
+  const str = value.toString(8).padStart(length - 1, "0") + "\0";
+  writeTarString(buffer, offset, str, length);
+}
+
+function createTarHeader(name, size, mtime) {
+  const buffer = new Uint8Array(TAR_BLOCK_SIZE);
+  writeTarString(buffer, 0, name, 100);
+  writeTarOctal(buffer, 100, 0o644, 8);
+  writeTarOctal(buffer, 108, 0, 8);
+  writeTarOctal(buffer, 116, 0, 8);
+  writeTarOctal(buffer, 124, size, 12);
+  writeTarOctal(buffer, 136, mtime, 12);
+  for (let i = 148; i < 156; i += 1) {
+    buffer[i] = 32;
+  }
+  buffer[156] = "0".charCodeAt(0);
+  writeTarString(buffer, 257, "ustar", 5);
+  writeTarString(buffer, 263, "00", 2);
+  let checksum = 0;
+  for (let i = 0; i < TAR_BLOCK_SIZE; i += 1) {
+    checksum += buffer[i];
+  }
+  const checksumStr = checksum.toString(8).padStart(6, "0") + "\0 ";
+  writeTarString(buffer, 148, checksumStr, 8);
+  return buffer;
+}
+
+async function buildTar(files) {
+  const parts = [];
+  const mtime = Math.floor(Date.now() / 1000);
+  for (const file of files) {
+    const data =
+      file.data instanceof Uint8Array ? file.data : new Uint8Array(await file.blob.arrayBuffer());
+    parts.push(createTarHeader(file.name, data.length, mtime));
+    parts.push(data);
+    const padding = (TAR_BLOCK_SIZE - (data.length % TAR_BLOCK_SIZE)) % TAR_BLOCK_SIZE;
+    if (padding) {
+      parts.push(new Uint8Array(padding));
+    }
+  }
+  parts.push(new Uint8Array(TAR_BLOCK_SIZE * 2));
+  return new Blob(parts, { type: "application/x-tar" });
+}
+
 function useWasmApi() {
   const [api, setApi] = useState(null);
 
@@ -111,6 +165,8 @@ function useWasmApi() {
         getCleanSceneAfterRecording: wrap("web_get_clean_scene_after_recording", "number", []),
         setRecordingTimeLimit: wrap("web_set_recording_time_limit", null, ["number"]),
         getRecordingTimeLimit: wrap("web_get_recording_time_limit", "number", []),
+        setShowBrushCursor: wrap("web_set_show_brush_cursor", null, ["number"]),
+        getShowBrushCursor: wrap("web_get_show_brush_cursor", "number", []),
         clearScene: wrap("web_clear_scene", null, []),
         setToolEraser: wrap("web_set_tool_eraser", null, ["number"]),
         getToolEraser: wrap("web_get_tool_eraser", "number", []),
@@ -347,10 +403,27 @@ function App() {
   const [pauseAfterRecording, setPauseAfterRecording] = useState(storedState.pauseAfterRecording ?? false);
   const [cleanSceneAfterRecording, setCleanSceneAfterRecording] = useState(storedState.cleanSceneAfterRecording ?? false);
   const [recordingTimeLimit, setRecordingTimeLimit] = useState(storedState.recordingTimeLimit ?? 0);
+  const [recordingMode, setRecordingMode] = useState(storedState.recordingMode ?? "webm");
+  const [recordingFps, setRecordingFps] = useState(storedState.recordingFps ?? 60);
+  const [showBrushCursor, setShowBrushCursor] = useState(storedState.showBrushCursor ?? true);
+  const [hideBrushDuringRecording, setHideBrushDuringRecording] = useState(
+    storedState.hideBrushDuringRecording ?? true
+  );
   const [isRecording, setIsRecording] = useState(false);
   const mediaRecorderRef = useRef(null);
   const recordingChunksRef = useRef([]);
   const recordingTimerRef = useRef(null);
+  const recordingModeRef = useRef(recordingMode);
+  const brushCursorBeforeRecordingRef = useRef(null);
+  const frameCaptureRef = useRef({
+    active: false,
+    stopping: false,
+    frames: [],
+    frameIndex: 0,
+    maxFrames: null,
+    inFlight: false,
+    pendingResolve: null
+  });
   const [toolEraser, setToolEraser] = useState(storedState.toolEraser ?? false);
   const [toolRadialForce, setToolRadialForce] = useState(storedState.toolRadialForce ?? false);
   const [toolSpin, setToolSpin] = useState(storedState.toolSpin ?? false);
@@ -486,22 +559,57 @@ function App() {
     []
   );
 
-  const stopRecording = () => {
+  const clearRecordingTimer = () => {
     if (recordingTimerRef.current) {
       clearTimeout(recordingTimerRef.current);
       recordingTimerRef.current = null;
     }
+  };
+
+  const finishRecording = () => {
+    setIsRecording(false);
+    if (hideBrushDuringRecording && brushCursorBeforeRecordingRef.current !== null) {
+      const previous = brushCursorBeforeRecordingRef.current;
+      brushCursorBeforeRecordingRef.current = null;
+      setShowBrushCursor(previous);
+      api?.setShowBrushCursor(previous ? 1 : 0);
+    }
+    if (pauseAfterRecording) {
+      setTimePlaying(false);
+      api?.setTimePlaying(0);
+    }
+    if (cleanSceneAfterRecording) {
+      api?.clearScene();
+    }
+  };
+
+  const applyBrushForRecording = () => {
+    if (!hideBrushDuringRecording) return;
+    if (brushCursorBeforeRecordingRef.current === null) {
+      brushCursorBeforeRecordingRef.current = showBrushCursor;
+    }
+    if (showBrushCursor) {
+      setShowBrushCursor(false);
+      api?.setShowBrushCursor(0);
+    }
+  };
+
+  const stopWebmRecording = () => {
+    clearRecordingTimer();
     if (mediaRecorderRef.current && mediaRecorderRef.current.state !== "inactive") {
       mediaRecorderRef.current.stop();
     }
   };
 
-  const startRecording = () => {
+  const startWebmRecording = () => {
     const canvas = document.getElementById("canvas");
     if (!canvas || !window.MediaRecorder) return;
     if (mediaRecorderRef.current && mediaRecorderRef.current.state !== "inactive") return;
 
-    const stream = canvas.captureStream(60);
+    applyBrushForRecording();
+
+    const fps = Math.max(1, Math.min(240, Math.round(recordingFps)));
+    const stream = canvas.captureStream(fps);
     const preferred = [
       "video/webm;codecs=vp9",
       "video/webm;codecs=vp8",
@@ -524,16 +632,9 @@ function App() {
       anchor.href = url;
       anchor.download = `galaxy-engine-${timestamp}.webm`;
       anchor.click();
-      URL.revokeObjectURL(url);
+      setTimeout(() => URL.revokeObjectURL(url), 1000);
       recordingChunksRef.current = [];
-      setIsRecording(false);
-      if (pauseAfterRecording) {
-        setTimePlaying(false);
-        api?.setTimePlaying(0);
-      }
-      if (cleanSceneAfterRecording) {
-        api?.clearScene();
-      }
+      finishRecording();
     };
 
     recorder.start();
@@ -542,8 +643,117 @@ function App() {
 
     if (recordingTimeLimit > 0) {
       recordingTimerRef.current = setTimeout(() => {
-        stopRecording();
+        stopWebmRecording();
       }, recordingTimeLimit * 1000);
+    }
+  };
+
+  const getFrameLimit = () => {
+    if (recordingTimeLimit <= 0) return null;
+    const fps = Math.max(1, Math.min(240, Math.round(recordingFps)));
+    return Math.max(1, Math.round(recordingTimeLimit * fps));
+  };
+
+  const startFrameCapture = () => {
+    const canvas = document.getElementById("canvas");
+    if (!canvas || !canvas.toBlob) return;
+    if (frameCaptureRef.current.active) return;
+
+    applyBrushForRecording();
+
+    const capture = frameCaptureRef.current;
+    capture.active = true;
+    capture.stopping = false;
+    capture.frames = [];
+    capture.frameIndex = 0;
+    capture.maxFrames = getFrameLimit();
+    capture.inFlight = false;
+    capture.pendingResolve = null;
+    setIsRecording(true);
+
+    window.webFrameCaptureTick = () => {
+      const current = frameCaptureRef.current;
+      if (!current.active || current.stopping || current.inFlight) return;
+      current.inFlight = true;
+      canvas.toBlob(
+        (blob) => {
+          const latest = frameCaptureRef.current;
+          latest.inFlight = false;
+          if (latest.pendingResolve) {
+            const resolve = latest.pendingResolve;
+            latest.pendingResolve = null;
+            resolve();
+          }
+          if (!latest.active || latest.stopping) return;
+          if (blob) {
+            const frameNumber = String(latest.frameIndex + 1).padStart(6, "0");
+            latest.frames.push({ name: `frame_${frameNumber}.png`, blob });
+            latest.frameIndex += 1;
+          }
+          if (latest.maxFrames && latest.frameIndex >= latest.maxFrames) {
+            stopFrameCapture();
+          }
+        },
+        "image/png"
+      );
+    };
+  };
+
+  const stopFrameCapture = async () => {
+    clearRecordingTimer();
+    const capture = frameCaptureRef.current;
+    if (!capture.active || capture.stopping) return;
+    capture.active = false;
+    capture.stopping = true;
+    window.webFrameCaptureTick = null;
+    if (capture.inFlight) {
+      await new Promise((resolve) => {
+        capture.pendingResolve = resolve;
+      });
+    }
+
+    const canvas = document.getElementById("canvas");
+    const fps = Math.max(1, Math.min(240, Math.round(recordingFps)));
+    const metadata = {
+      fps,
+      width: canvas ? canvas.width : 0,
+      height: canvas ? canvas.height : 0,
+      frameCount: capture.frames.length,
+      createdAt: new Date().toISOString()
+    };
+    const metadataBlob = new Blob([JSON.stringify(metadata, null, 2)], { type: "application/json" });
+    const tar = await buildTar([{ name: "metadata.json", blob: metadataBlob }, ...capture.frames]);
+    const url = URL.createObjectURL(tar);
+    const anchor = document.createElement("a");
+    const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
+    anchor.href = url;
+    anchor.download = `galaxy-engine-frames-${timestamp}.tar`;
+    anchor.click();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+
+    capture.frames = [];
+    capture.frameIndex = 0;
+    capture.maxFrames = null;
+    capture.inFlight = false;
+    capture.pendingResolve = null;
+    capture.stopping = false;
+    finishRecording();
+  };
+
+  const startRecording = () => {
+    recordingModeRef.current = recordingMode;
+    if (recordingMode === "frames") {
+      startFrameCapture();
+    } else {
+      startWebmRecording();
+    }
+  };
+
+  const stopRecording = () => {
+    if (recordingModeRef.current === "frames") {
+      stopFrameCapture();
+    } else {
+      stopWebmRecording();
     }
   };
 
@@ -722,6 +932,25 @@ function App() {
     setRecordingTimeLimit(recordingTimeLimitValue);
     api.setRecordingTimeLimit(recordingTimeLimitValue);
 
+    const recordingModeValue =
+      stored.recordingMode === "frames" || stored.recordingMode === "webm"
+        ? stored.recordingMode
+        : recordingMode;
+    setRecordingMode(recordingModeValue);
+
+    const recordingFpsValue = getNum("recordingFps", recordingFps);
+    setRecordingFps(Math.max(1, Math.min(240, Math.round(recordingFpsValue))));
+
+    const showBrushCursorValue = getBool("showBrushCursor", api.getShowBrushCursor() === 1);
+    setShowBrushCursor(showBrushCursorValue);
+    api.setShowBrushCursor(showBrushCursorValue ? 1 : 0);
+
+    const hideBrushDuringRecordingValue = getBool(
+      "hideBrushDuringRecording",
+      hideBrushDuringRecording
+    );
+    setHideBrushDuringRecording(hideBrushDuringRecordingValue);
+
     const toolEraserValue = getBool("toolEraser", api.getToolEraser() === 1);
     setToolEraser(toolEraserValue);
     api.setToolEraser(toolEraserValue ? 1 : 0);
@@ -813,6 +1042,10 @@ function App() {
       pauseAfterRecording,
       cleanSceneAfterRecording,
       recordingTimeLimit,
+      recordingMode,
+      recordingFps,
+      showBrushCursor,
+      hideBrushDuringRecording,
       toolEraser,
       toolRadialForce,
       toolSpin,
@@ -863,6 +1096,10 @@ function App() {
     pauseAfterRecording,
     cleanSceneAfterRecording,
     recordingTimeLimit,
+    recordingMode,
+    recordingFps,
+    showBrushCursor,
+    hideBrushDuringRecording,
     toolEraser,
     toolRadialForce,
     toolSpin,
@@ -1082,6 +1319,36 @@ function App() {
               ${activeParamTab === "Recording" &&
               html`
                 <${SectionTitle}>Recording</${SectionTitle}>
+                <label style=${{ display: "flex", flexDirection: "column", gap: 6, marginBottom: 12 }}>
+                  <span>Recording Mode</span>
+                  <select
+                    value=${recordingMode}
+                    disabled=${isRecording}
+                    onChange=${(e) => setRecordingMode(e.target.value)}
+                    style=${{
+                      background: "rgba(255,255,255,0.06)",
+                      border: "1px solid rgba(255,255,255,0.12)",
+                      borderRadius: 8,
+                      padding: "6px 8px",
+                      color: "#e6edf3"
+                    }}
+                  >
+                    <option value="webm">Real-time WebM (fast export)</option>
+                    <option value="frames">Frame Capture (PNG sequence)</option>
+                  </select>
+                </label>
+                <${IntSlider}
+                  label="Recording FPS"
+                  value=${recordingFps}
+                  min=${1}
+                  max=${120}
+                  step=${1}
+                  tooltip="Used for WebM capture or as playback FPS metadata for frame capture."
+                  onChange=${(val) => {
+                    if (isRecording) return;
+                    setRecordingFps(val);
+                  }}
+                />
                 <${Toggle}
                   label="Pause After Recording"
                   value=${pauseAfterRecording}
@@ -1104,27 +1371,45 @@ function App() {
                   min=${0}
                   max=${60}
                   step=${0.5}
+                  tooltip="WebM uses real seconds; frame capture uses this as final video length."
                   onChange=${(val) => {
                     if (isRecording) return;
                     setRecordingTimeLimit(val);
                     api?.setRecordingTimeLimit(val);
                   }}
                 />
+                <${Toggle}
+                  label="Hide Brush During Recording"
+                  value=${hideBrushDuringRecording}
+                  onChange=${(val) => {
+                    setHideBrushDuringRecording(val);
+                  }}
+                />
                 <${Button}
-                  label=${isRecording ? "Recording..." : "Start Recording (WebM @ 60fps)"}
+                  label=${isRecording
+                    ? recordingMode === "frames"
+                      ? "Capturing Frames..."
+                      : "Recording..."
+                    : recordingMode === "frames"
+                      ? "Start Frame Capture (PNG sequence)"
+                      : `Start Recording (WebM @ ${Math.round(recordingFps)}fps)`}
                   onClick=${() => {
                     if (!isRecording) startRecording();
                   }}
                   disabled=${isRecording}
                 />
                 <${Button}
-                  label="Stop Recording"
+                  label=${recordingMode === "frames" ? "Stop Capture" : "Stop Recording"}
                   onClick=${() => {
                     if (isRecording) stopRecording();
                   }}
                   disabled=${!isRecording}
                 />
-                <${Note}>Recording downloads a WebM file at 60fps.</${Note}>
+                <${Note}>
+                  ${recordingMode === "frames"
+                    ? "Frame capture downloads a .tar with PNGs and metadata.json. Encode with ffmpeg at your chosen FPS."
+                    : `Recording downloads a WebM file at ${Math.round(recordingFps)}fps.`}
+                </${Note}>
               `}
               ${activeParamTab !== "Visuals" && activeParamTab !== "Recording" &&
               html`
@@ -1550,6 +1835,15 @@ function App() {
               onChange=${(val) => {
                 setTimeStep(val);
                 api?.setTimeStepMultiplier(val);
+              }}
+            />
+            <${SectionTitle}>Brush</${SectionTitle}>
+            <${Toggle}
+              label="Show Brush Cursor"
+              value=${showBrushCursor}
+              onChange=${(val) => {
+                setShowBrushCursor(val);
+                api?.setShowBrushCursor(val ? 1 : 0);
               }}
             />
             <${SectionTitle}>Physics</${SectionTitle}>

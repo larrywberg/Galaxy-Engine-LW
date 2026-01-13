@@ -1,4 +1,7 @@
 #include "globalLogic.h"
+#if defined(EMSCRIPTEN)
+#include <emscripten/emscripten.h>
+#endif
 
 int main(int argc, char** argv) {
 
@@ -465,6 +468,17 @@ void main() {
 
 
 		EndDrawing();
+
+#if defined(EMSCRIPTEN)
+		EM_ASM({
+			if (typeof window !== 'undefined' && window.webFrameCaptureTick) {
+				if (Module && Module.ctx && Module.ctx.finish) {
+					Module.ctx.finish();
+				}
+				window.webFrameCaptureTick();
+			}
+		});
+#endif
 
 		enableMultiThreading();
 	}

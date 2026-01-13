@@ -89,6 +89,14 @@ EMSCRIPTEN_KEEPALIVE float web_get_recording_time_limit() {
 	return myVar.recordingTimeLimit;
 }
 
+EMSCRIPTEN_KEEPALIVE void web_set_show_brush_cursor(int enabled) {
+	myVar.showBrushCursor = (enabled != 0);
+}
+
+EMSCRIPTEN_KEEPALIVE int web_get_show_brush_cursor() {
+	return myVar.showBrushCursor ? 1 : 0;
+}
+
 EMSCRIPTEN_KEEPALIVE void web_clear_scene() {
 	myParam.pParticles.clear();
 	myParam.rParticles.clear();

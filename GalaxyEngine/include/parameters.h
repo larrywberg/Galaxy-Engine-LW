@@ -207,6 +207,7 @@ struct UpdateVariables{
 	bool isBrushDrawing = false;
 	bool autoPausedForBrush = false;
 	bool wasTimePlayingBeforeBrush = false;
+	bool showBrushCursor = true;
 
 	Font customFont = { 0 };
 	int introFontSize = 48;
