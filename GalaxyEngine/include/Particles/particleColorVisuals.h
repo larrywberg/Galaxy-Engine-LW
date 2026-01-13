@@ -156,9 +156,9 @@ struct ColorVisuals {
 
 				float particleVelSq = pParticles[i].vel.x * pParticles[i].vel.x +
 					pParticles[i].vel.y * pParticles[i].vel.y;
-
-				float clampedVel = std::clamp(particleVelSq, minVel, maxVel);
-				float normalizedVel = clampedVel / maxVel;
+				float particleVel = std::sqrt(particleVelSq);
+				float clampedVel = std::clamp(particleVel, minVel, maxVel);
+				float normalizedVel = maxVel > 0.0f ? (clampedVel / maxVel) : 0.0f;
 
 				hue = (1.0f - normalizedVel) * 240.0f;
 				saturation = 1.0f;

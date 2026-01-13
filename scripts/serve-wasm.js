@@ -6,7 +6,10 @@ const fs = require("fs");
 const path = require("path");
 const url = require("url");
 
-const rootDir = path.resolve(__dirname, "..", "build", "wasm-debug");
+const isRelease = process.argv.includes("--release");
+const buildFolder = isRelease ? "wasm-release" : "wasm-debug";
+const rootDir = path.resolve(__dirname, "..", "build", buildFolder);
+const uiDir = path.resolve(__dirname, "..", "web");
 const port = Number(process.env.PORT || 8080);
 
 const mimeTypes = {
@@ -22,6 +25,12 @@ const mimeTypes = {
   ".svg": "image/svg+xml; charset=utf-8",
   ".txt": "text/plain; charset=utf-8"
 };
+
+function setCrossOriginHeaders(res) {
+  res.setHeader("Cross-Origin-Opener-Policy", "same-origin");
+  res.setHeader("Cross-Origin-Embedder-Policy", "require-corp");
+  res.setHeader("Cross-Origin-Resource-Policy", "same-origin");
+}
 
 const fallbackHtml = `<!doctype html>
 <html lang="en">
@@ -50,34 +59,57 @@ function safePath(requestPath) {
 }
 
 const server = http.createServer((req, res) => {
+  setCrossOriginHeaders(res);
   const parsed = url.parse(req.url || "/");
   const requestPath = parsed.pathname || "/";
+  const uiRequestPath = requestPath.replace(/^\/+/, "");
+  const uiIndex = path.join(uiDir, "index.html");
+  const uiAsset = path.join(uiDir, uiRequestPath);
   const filePath = safePath(requestPath === "/" ? "/GalaxyEngine.html" : requestPath);
 
-  fs.stat(filePath, (err, stats) => {
-    if (err || !stats.isFile()) {
-      if (requestPath === "/" || requestPath === "/GalaxyEngine.html") {
-        res.statusCode = 200;
-        res.setHeader("Content-Type", "text/html; charset=utf-8");
-        res.end(fallbackHtml);
-        return;
-      }
-
-      res.statusCode = 404;
-      res.setHeader("Content-Type", "text/plain; charset=utf-8");
-      res.end("Not found");
+  fs.stat(uiIndex, (uiErr, uiStats) => {
+    if (!uiErr && uiStats.isFile() && requestPath === "/") {
+      res.statusCode = 200;
+      res.setHeader("Content-Type", "text/html; charset=utf-8");
+      fs.createReadStream(uiIndex).pipe(res);
       return;
     }
 
-    const ext = path.extname(filePath);
-    res.statusCode = 200;
-    res.setHeader("Content-Type", mimeTypes[ext] || "application/octet-stream");
-    fs.createReadStream(filePath).pipe(res);
+    fs.stat(uiAsset, (uiAssetErr, uiAssetStats) => {
+      if (!uiAssetErr && uiAssetStats.isFile()) {
+        const ext = path.extname(uiAsset);
+        res.statusCode = 200;
+        res.setHeader("Content-Type", mimeTypes[ext] || "application/octet-stream");
+        fs.createReadStream(uiAsset).pipe(res);
+        return;
+      }
+
+      fs.stat(filePath, (err, stats) => {
+        if (err || !stats.isFile()) {
+          if (requestPath === "/" || requestPath === "/GalaxyEngine.html") {
+            res.statusCode = 200;
+            res.setHeader("Content-Type", "text/html; charset=utf-8");
+            res.end(fallbackHtml);
+            return;
+          }
+
+          res.statusCode = 404;
+          res.setHeader("Content-Type", "text/plain; charset=utf-8");
+          res.end("Not found");
+          return;
+        }
+
+        const ext = path.extname(filePath);
+        res.statusCode = 200;
+        res.setHeader("Content-Type", mimeTypes[ext] || "application/octet-stream");
+        fs.createReadStream(filePath).pipe(res);
+      });
+    });
   });
 });
 
 server.listen(port, "127.0.0.1", () => {
-  const urlText = `http://127.0.0.1:${port}/GalaxyEngine.html`;
+  const urlText = `http://127.0.0.1:${port}/`;
   console.log(`Serving ${rootDir}`);
   console.log(`Open ${urlText}`);
 });

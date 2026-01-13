@@ -1,0 +1,128 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>GalaxyEngine (Web)</title>
+    <style>
+      :root {
+        color-scheme: dark;
+        font-family: "Space Grotesk", system-ui, sans-serif;
+        --side-width: 320px;
+        --side-gap: 16px;
+        --edge-inset: 16px;
+      }
+      html, body {
+        margin: 0;
+        width: 100%;
+        height: 100%;
+        background: #0b0e14;
+        overflow: hidden;
+      }
+      #app {
+        position: relative;
+        width: 100%;
+        height: 100%;
+      }
+      #layout {
+        position: absolute;
+        inset: var(--edge-inset);
+        display: grid;
+        grid-template-columns: var(--side-width) 1fr var(--side-width);
+        gap: var(--side-gap);
+        pointer-events: auto;
+      }
+      .side-col {
+        background: rgb(28, 30, 36);
+        border: 1px solid rgba(255,255,255,0.05);
+        border-radius: 14px;
+        pointer-events: none;
+      }
+      #gl-column {
+        position: relative;
+        min-width: 0;
+        min-height: 0;
+        background: #0b0e14;
+        border-radius: 12px;
+        overflow: hidden;
+      }
+      #canvas {
+        position: absolute;
+        display: block;
+        outline: none;
+        z-index: 1;
+      }
+      #ui-root {
+        position: absolute;
+        inset: 0;
+        pointer-events: none;
+        z-index: 2;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="app">
+      <div id="layout">
+        <div class="side-col"></div>
+        <div id="gl-column">
+          <canvas id="canvas"></canvas>
+        </div>
+        <div class="side-col"></div>
+      </div>
+      <div id="ui-root"></div>
+    </div>
+    <script>
+      const app = document.getElementById("app");
+      const glColumn = document.getElementById("gl-column");
+      const canvas = document.getElementById("canvas");
+
+      function resizeCanvas() {
+        const rect = glColumn.getBoundingClientRect();
+        const maxSize = 2000;
+        const targetRatio = 16 / 9;
+        let width = Math.max(rect.width, 1);
+        let height = Math.max(width / targetRatio, 1);
+        if (height > rect.height) {
+          height = Math.max(rect.height, 1);
+          width = Math.max(height * targetRatio, 1);
+        }
+        const scale = Math.min(1, maxSize / Math.max(width, 1), maxSize / Math.max(height, 1));
+        width = Math.max(Math.floor(width * scale), 1);
+        height = Math.max(Math.floor(height * scale), 1);
+        app.style.width = `${window.innerWidth}px`;
+        app.style.height = `${window.innerHeight}px`;
+        if (canvas.parentElement !== glColumn) {
+          glColumn.appendChild(canvas);
+        }
+        canvas.style.left = `${(rect.width - width) * 0.5}px`;
+        canvas.style.top = `${(rect.height - height) * 0.5}px`;
+        canvas.style.width = `${width}px`;
+        canvas.style.height = `${height}px`;
+        canvas.width = width;
+        canvas.height = height;
+        if (window.webSetWindowSize) {
+          window.webSetWindowSize(width, height);
+        }
+      }
+
+      resizeCanvas();
+      window.addEventListener("resize", resizeCanvas);
+      if ("ResizeObserver" in window) {
+        const resizeObserver = new ResizeObserver(() => resizeCanvas());
+        resizeObserver.observe(glColumn);
+      }
+      window.webSyncCanvasSize = resizeCanvas;
+
+      window.Module = {
+        canvas,
+        onRuntimeInitialized() {
+          if (window.webUiInit) {
+            window.webUiInit();
+          }
+        }
+      };
+    </script>
+    <script src="GalaxyEngine.js"></script>
+    <script type="module" src="ui.js"></script>
+  </body>
+</html>

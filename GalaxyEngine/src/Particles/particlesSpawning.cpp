@@ -101,6 +101,23 @@ void ParticlesSpawning::particlesInitialConditions(Physics& physics, UpdateVaria
 			}
 		}
 
+		if (myVar.isBrushDrawing) {
+			if (!myVar.autoPausedForBrush && myVar.isTimePlaying) {
+				myVar.wasTimePlayingBeforeBrush = true;
+				myVar.autoPausedForBrush = true;
+				myVar.isTimePlaying = false;
+			}
+
+			if (myVar.autoPausedForBrush) {
+				myVar.timeFactor = 0.0f;
+			}
+		}
+		else if (myVar.autoPausedForBrush) {
+			myVar.isTimePlaying = myVar.wasTimePlayingBeforeBrush;
+			myVar.autoPausedForBrush = false;
+			myVar.wasTimePlayingBeforeBrush = false;
+		}
+
 
 		if ((IO::shortcutReleased(KEY_ONE) || IO::mouseReleased(0) && myVar.toolSpawnBigGalaxy) && myVar.isDragging) {
 

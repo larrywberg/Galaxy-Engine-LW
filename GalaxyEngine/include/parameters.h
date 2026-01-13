@@ -205,6 +205,8 @@ struct UpdateVariables{
 	bool unPinFlag = false;
 
 	bool isBrushDrawing = false;
+	bool autoPausedForBrush = false;
+	bool wasTimePlayingBeforeBrush = false;
 
 	Font customFont = { 0 };
 	int introFontSize = 48;

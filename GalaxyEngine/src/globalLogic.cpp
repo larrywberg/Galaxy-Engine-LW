@@ -995,10 +995,17 @@ glm::vec3 bb = { 0.0f, 0.0f, 0.0f };
 
 void updateScene() {
 
+#if !defined(EMSCRIPTEN)
 	// If menu is active, do not use mouse input for non-menu stuff. I keep raylib's own mouse input for the menu but the custom IO for non-menu stuff
 	if (myParam.rightClickSettings.isMenuActive) {
 		ImGui::GetIO().WantCaptureMouse = true;
 	}
+#endif
+	myParam.myCamera.mouseWorldPos = glm::vec2(
+		GetScreenToWorld2D(GetMousePosition(), myParam.myCamera.camera).x,
+		GetScreenToWorld2D(GetMousePosition(), myParam.myCamera.camera).y
+	);
+	myVar.mouseWorldPos = myParam.myCamera.mouseWorldPos;
 
 	if (myVar.isOpticsEnabled) {
 		lighting.rayLogic(myVar, myParam);
@@ -1501,9 +1508,10 @@ void drawScene(Texture2D& particleBlurTex, RenderTexture2D& myRayTracingTexture,
 
 	BeginMode2D(myParam.myCamera.camera);
 
-	myVar.mouseWorldPos = glm::vec2(GetScreenToWorld2D(GetMousePosition(), myParam.myCamera.camera).x,
-		GetScreenToWorld2D(GetMousePosition(), myParam.myCamera.camera).y);
-	myParam.brush.drawBrush(myVar.mouseWorldPos);
+	myVar.mouseWorldPos = myParam.myCamera.mouseWorldPos;
+	if (!myVar.isRecording) {
+		myParam.brush.drawBrush(myVar.mouseWorldPos);
+	}
 	DrawRectangleLinesEx({ 0,0, static_cast<float>(myVar.domainSize.x), static_cast<float>(myVar.domainSize.y) }, 3, GRAY);
 
 	// Z-Curves debug toggle
@@ -1526,9 +1534,11 @@ void drawScene(Texture2D& particleBlurTex, RenderTexture2D& myRayTracingTexture,
 
 	// EVERYTHING STATIC RELATIVE TO CAMERA BELOW
 
+#if !defined(EMSCRIPTEN)
 	if (!introActive) {
 		myUI.uiLogic(myParam, myVar, sph, save, geSound, lighting, field);
 	}
+#endif
 
 	save.saveLoadLogic(myVar, myParam, sph, physics, lighting, field);
 

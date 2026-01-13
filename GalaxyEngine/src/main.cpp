@@ -48,8 +48,11 @@ int main(int argc, char** argv) {
 	SetWindowIcon(icon);
 
 	// ---- Textures & rlImGui ---- //
-
+#if !defined(EMSCRIPTEN)
 	rlImGuiSetup(true);
+#else
+	myVar.isMouseNotHoveringUI = true;
+#endif
 
 	Texture2D particleBlurTex = LoadTexture("Textures/ParticleBlur.png");
 
@@ -88,7 +91,7 @@ int main(int argc, char** argv) {
 	save.saveFlag = false;
 
 	// ---- ImGui ---- //
-
+#if !defined(EMSCRIPTEN)
 	ImGuiStyle& style = ImGui::GetStyle();
 	ImVec4* colors = style.Colors;
 
@@ -136,7 +139,10 @@ int main(int argc, char** argv) {
 	}
 
 	io.Fonts->Build();
+#endif
+#if !defined(EMSCRIPTEN)
 	ImPlot::CreateContext();
+#endif
 
 	// ---- Intro ---- //
 
@@ -266,7 +272,9 @@ void main() {
 
 		BeginMode2D(myParam.myCamera.cameraLogic(save.loadFlag, myVar.isMouseNotHoveringUI));
 
+#if !defined(EMSCRIPTEN)
 		rlImGuiBegin();
+#endif
 
 		if (introActive) {
 			ImGuiIO& io = ImGui::GetIO();
@@ -327,6 +335,11 @@ void main() {
 		}
 
 		if (GetScreenWidth() != prevScreenWidth || GetScreenHeight() != prevScreenHeight) {
+			const float deltaX = (static_cast<float>(GetScreenWidth()) - static_cast<float>(prevScreenWidth)) * 0.5f;
+			const float deltaY = (static_cast<float>(GetScreenHeight()) - static_cast<float>(prevScreenHeight)) * 0.5f;
+			// Keep the camera offset anchored relative to the screen center after resize.
+			myParam.myCamera.camera.offset.x += deltaX;
+			myParam.myCamera.camera.offset.y += deltaY;
 
 			UnloadRenderTexture(accumulatedTexture);
 			accumulatedTexture = CreateFloatRenderTexture(GetScreenWidth(), GetScreenHeight());
@@ -439,7 +452,9 @@ void main() {
 
 		ImGui::PopStyleVar();
 
+#if !defined(EMSCRIPTEN)
 		rlImGuiEnd();
+#endif
 
 		DrawTextureRec(
 			myMiscTexture.texture,
@@ -454,8 +469,10 @@ void main() {
 		enableMultiThreading();
 	}
 
+#if !defined(EMSCRIPTEN)
 	rlImGuiShutdown();
 	ImPlot::DestroyContext();
+#endif
 
 #if !defined(EMSCRIPTEN)
 	UnloadShader(myBloom);
