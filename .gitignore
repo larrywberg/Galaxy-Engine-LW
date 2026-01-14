@@ -1,5 +1,9 @@
 # Visual Studio Code settings
-.vscode/
+.vscode/*
+!.vscode/extensions.json
+!.vscode/launch.json
+!.vscode/tasks.json
+!.vscode/settings.json
 
 # Visual Studio settings
 .vs/
@@ -25,4 +29,3 @@ x64/
 .scripts/
 .github/
 Saves/
-

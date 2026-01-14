@@ -1,0 +1,26 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "GalaxyEngine: Dev (build + run)",
+      "type": "npm",
+      "script": "dev",
+      "group": "build",
+      "problemMatcher": []
+    },
+    {
+      "label": "GalaxyEngine: Build wasm",
+      "type": "npm",
+      "script": "build",
+      "group": "build",
+      "problemMatcher": []
+    },
+    {
+      "label": "GalaxyEngine: Run wasm server",
+      "type": "npm",
+      "script": "run",
+      "group": "build",
+      "problemMatcher": []
+    }
+  ]
+}
