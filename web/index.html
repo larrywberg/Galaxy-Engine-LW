@@ -4,6 +4,7 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>GalaxyEngine (Web)</title>
+    <link rel="icon" href="data:," />
     <style>
       :root {
         color-scheme: dark;
@@ -58,6 +59,53 @@
         pointer-events: none;
         z-index: 2;
       }
+      #loading {
+        position: absolute;
+        inset: 0;
+        z-index: 3;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        background: rgba(11, 14, 20, 0.82);
+        backdrop-filter: blur(6px);
+        transition: opacity 300ms ease;
+      }
+      #loading.loading-hidden {
+        opacity: 0;
+        pointer-events: none;
+      }
+      .loading-card {
+        width: min(420px, 90vw);
+        padding: 24px;
+        border-radius: 16px;
+        background: rgba(24, 27, 35, 0.92);
+        border: 1px solid rgba(255, 255, 255, 0.08);
+        box-shadow: 0 20px 40px rgba(0, 0, 0, 0.35);
+      }
+      .loading-title {
+        font-size: 18px;
+        font-weight: 600;
+        letter-spacing: 0.02em;
+        margin-bottom: 12px;
+      }
+      .loading-bar {
+        height: 10px;
+        width: 100%;
+        background: rgba(255, 255, 255, 0.08);
+        border-radius: 999px;
+        overflow: hidden;
+        margin-bottom: 12px;
+      }
+      .loading-bar-fill {
+        height: 100%;
+        width: 0%;
+        background: linear-gradient(90deg, #60a5fa, #22d3ee);
+        transition: width 200ms ease;
+      }
+      .loading-status {
+        font-size: 13px;
+        color: rgba(255, 255, 255, 0.7);
+      }
     </style>
   </head>
   <body>
@@ -71,10 +119,41 @@
       </div>
       <div id="ui-root"></div>
     </div>
+    <div id="loading">
+      <div class="loading-card">
+        <div class="loading-title">Loading GalaxyEngine</div>
+        <div class="loading-bar">
+          <div class="loading-bar-fill"></div>
+        </div>
+        <div class="loading-status" id="loading-status">Starting...</div>
+      </div>
+    </div>
     <script>
       const app = document.getElementById("app");
       const glColumn = document.getElementById("gl-column");
       const canvas = document.getElementById("canvas");
+      const loading = document.getElementById("loading");
+      const loadingStatus = document.getElementById("loading-status");
+      const loadingFill = document.querySelector(".loading-bar-fill");
+
+      let totalDependencies = 0;
+      function setLoadingVisible(visible) {
+        loading.classList.toggle("loading-hidden", !visible);
+      }
+
+      function setLoadingProgress(current, total) {
+        if (!total || total <= 0) {
+          return;
+        }
+        const clamped = Math.max(0, Math.min(1, current / total));
+        loadingFill.style.width = `${(clamped * 100).toFixed(1)}%`;
+      }
+
+      function setLoadingStatus(message) {
+        if (message) {
+          loadingStatus.textContent = message;
+        }
+      }
 
       function resizeCanvas() {
         const rect = glColumn.getBoundingClientRect();
@@ -115,7 +194,32 @@
 
       window.Module = {
         canvas,
+        setStatus(text) {
+          setLoadingVisible(true);
+          if (typeof text !== "string") return;
+          const match = text.match(/\((\d+)\/(\d+)\)/);
+          if (match) {
+            const current = Number(match[1]);
+            const total = Number(match[2]);
+            setLoadingProgress(current, total);
+          }
+          setLoadingStatus(text);
+        },
+        monitorRunDependencies(left) {
+          totalDependencies = Math.max(totalDependencies, left);
+          if (left) {
+            setLoadingVisible(true);
+            setLoadingProgress(totalDependencies - left, totalDependencies);
+            setLoadingStatus(`Preparing... (${totalDependencies - left}/${totalDependencies})`);
+          } else {
+            setLoadingProgress(1, 1);
+            setLoadingStatus("Starting...");
+          }
+        },
         onRuntimeInitialized() {
+          setLoadingProgress(1, 1);
+          setLoadingStatus("Ready.");
+          setTimeout(() => setLoadingVisible(false), 300);
           if (window.webUiInit) {
             window.webUiInit();
           }

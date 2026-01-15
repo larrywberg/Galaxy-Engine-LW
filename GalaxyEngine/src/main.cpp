@@ -60,11 +60,54 @@ int main(int argc, char** argv) {
 	Texture2D particleBlurTex = LoadTexture("Textures/ParticleBlur.png");
 
 #if defined(EMSCRIPTEN)
-	Shader myBloom = { 0 };
-	const bool useBloom = false;
+	const char* bloomFs = R"(
+#version 100
+
+precision mediump float;
+precision mediump sampler2D;
+
+varying vec2 fragTexCoord;
+varying vec4 fragColor;
+
+uniform sampler2D texture0;
+uniform vec4 colDiffuse;
+uniform vec2 resolution;
+
+const float samples = 5.0;
+const float quality = 2.5;
+
+void main()
+{
+    vec4 sum = vec4(0.0);
+    vec2 sizeFactor = (vec2(1.0) / resolution) * quality;
+    vec4 source = texture2D(texture0, fragTexCoord);
+
+    const int range = 2;
+
+    for (int x = -range; x <= range; x++)
+    {
+        for (int y = -range; y <= range; y++)
+        {
+            sum += texture2D(texture0, fragTexCoord + vec2(float(x), float(y)) * sizeFactor);
+        }
+    }
+
+    vec4 blurred = sum / (samples * samples);
+    gl_FragColor = (blurred + source) * colDiffuse * fragColor;
+}
+	)";
+	Shader myBloom = LoadShaderFromMemory(nullptr, bloomFs);
+	int bloomResolutionLoc = GetShaderLocation(myBloom, "resolution");
+	float bloomResolution[2] = { (float)GetScreenWidth(), (float)GetScreenHeight() };
+	const bool useBloom = (myBloom.id != 0);
+	if (useBloom && bloomResolutionLoc != -1) {
+		SetShaderValue(myBloom, bloomResolutionLoc, bloomResolution, SHADER_UNIFORM_VEC2);
+	}
 #else
 	Shader myBloom = LoadShader(nullptr, "Shaders/bloom.fs");
-	const bool useBloom = true;
+	int bloomResolutionLoc = -1;
+	float bloomResolution[2] = { 0.0f, 0.0f };
+	const bool useBloom = (myBloom.id != 0);
 #endif
 
 	RenderTexture2D myParticlesTexture = CreateFloatRenderTexture(GetScreenWidth(), GetScreenHeight());
@@ -167,6 +210,51 @@ int main(int argc, char** argv) {
 
 	// ---- Ray Tracing and Long Exposure ---- //
 
+#if defined(EMSCRIPTEN)
+	const char* accumulationVs = R"(
+    #version 100
+
+attribute vec3 vertexPosition;
+attribute vec2 vertexTexCoord;
+attribute vec4 vertexColor;
+
+varying vec2 fragTexCoord;
+varying vec4 fragColor;
+
+uniform mat4 mvp;
+
+void main()
+{
+    gl_Position = mvp * vec4(vertexPosition, 1.0);
+    fragTexCoord = vertexTexCoord;
+    fragColor = vertexColor;
+}
+    )";
+
+	const char* accumulationFs = R"(
+#version 100
+
+precision mediump float;
+precision mediump sampler2D;
+
+varying vec2 fragTexCoord;
+varying vec4 fragColor;
+
+uniform sampler2D currentFrame;
+uniform sampler2D accumulatedFrame;
+uniform float sampleCount;
+
+void main() {
+
+    vec4 newColor = texture2D(currentFrame, fragTexCoord);
+    vec4 oldColor = texture2D(accumulatedFrame, fragTexCoord);
+
+    vec4 combined = (oldColor * (sampleCount - 1.0) + newColor) / sampleCount;
+
+    gl_FragColor = clamp(combined, 0.0, 1.0) * fragColor;
+}
+)";
+#else
 	const char* accumulationVs = R"(
     #version 330 core
 
@@ -215,21 +303,33 @@ void main() {
     finalColor = clamp(finalColor, 0.0, 1.0);
 }
 )";
+#endif
 
 #if defined(EMSCRIPTEN)
-	const bool useAccumulationShader = false;
-	Shader accumulationShader = { 0 };
-	int screenSizeLoc = -1;
-	int rayTextureLoc = -1;
-	int currentFrameLoc = -1;
-	int accumulatedFrameLoc = -1;
-	int sampleCountLoc = -1;
-	RenderTexture2D accumulatedTexture = CreateFloatRenderTexture(GetScreenWidth(), GetScreenHeight());
-	RenderTexture2D pingPongTexture = { 0 };
-	RenderTexture2D testSampleTexture = { 0 };
-#else
-	const bool useAccumulationShader = true;
 	Shader accumulationShader = LoadShaderFromMemory(accumulationVs, accumulationFs);
+	const bool useAccumulationShader = (accumulationShader.id != 0);
+
+	int screenSizeLoc = GetShaderLocation(accumulationShader, "screenSize");
+	float screenSize[2] = {
+		(float)myVar.screenWidth,
+		(float)myVar.screenHeight
+	};
+	if (screenSizeLoc != -1) {
+		SetShaderValue(accumulationShader, screenSizeLoc, screenSize, SHADER_UNIFORM_VEC2);
+	}
+
+	int rayTextureLoc = GetShaderLocation(accumulationShader, "rayTexture");
+
+	RenderTexture2D accumulatedTexture = CreateFloatRenderTexture(GetScreenWidth(), GetScreenHeight());
+	RenderTexture2D pingPongTexture = CreateFloatRenderTexture(GetScreenWidth(), GetScreenHeight());
+
+	int currentFrameLoc = GetShaderLocation(accumulationShader, "currentFrame");
+	int accumulatedFrameLoc = GetShaderLocation(accumulationShader, "accumulatedFrame");
+	int sampleCountLoc = GetShaderLocation(accumulationShader, "sampleCount");
+	RenderTexture2D testSampleTexture = LoadRenderTexture(GetScreenWidth(), GetScreenHeight());
+#else
+	Shader accumulationShader = LoadShaderFromMemory(accumulationVs, accumulationFs);
+	const bool useAccumulationShader = (accumulationShader.id != 0);
 
 	int screenSizeLoc = GetShaderLocation(accumulationShader, "screenSize");
 	float screenSize[2] = {
@@ -346,7 +446,6 @@ void main() {
 
 			UnloadRenderTexture(accumulatedTexture);
 			accumulatedTexture = CreateFloatRenderTexture(GetScreenWidth(), GetScreenHeight());
-#if !defined(EMSCRIPTEN)
 			UnloadRenderTexture(pingPongTexture);
 			UnloadRenderTexture(testSampleTexture);
 
@@ -355,8 +454,14 @@ void main() {
 
 			screenSize[0] = (float)GetScreenWidth();
 			screenSize[1] = (float)GetScreenHeight();
-			SetShaderValue(accumulationShader, screenSizeLoc, screenSize, SHADER_UNIFORM_VEC2);
-#endif
+			if (screenSizeLoc != -1) {
+				SetShaderValue(accumulationShader, screenSizeLoc, screenSize, SHADER_UNIFORM_VEC2);
+			}
+			if (useBloom && bloomResolutionLoc != -1) {
+				bloomResolution[0] = (float)GetScreenWidth();
+				bloomResolution[1] = (float)GetScreenHeight();
+				SetShaderValue(myBloom, bloomResolutionLoc, bloomResolution, SHADER_UNIFORM_VEC2);
+			}
 
 			prevScreenWidth = GetScreenWidth();
 			prevScreenHeight = GetScreenHeight();

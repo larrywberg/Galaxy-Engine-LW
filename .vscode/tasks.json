@@ -21,6 +21,13 @@
       "script": "run",
       "group": "build",
       "problemMatcher": []
+    },
+    {
+      "label": "GalaxyEngine: Deploy wasm",
+      "type": "npm",
+      "script": "wasm:deploy",
+      "group": "build",
+      "problemMatcher": []
     }
   ]
 }

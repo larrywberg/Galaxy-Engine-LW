@@ -29,6 +29,68 @@ function saveUiState(state) {
   }
 }
 
+function clampNumber(value, min, max) {
+  return Math.min(max, Math.max(min, value));
+}
+
+function normalizeColor(color) {
+  if (!color || typeof color !== "object") {
+    return { r: 255, g: 255, b: 255, a: 255 };
+  }
+  return {
+    r: clampNumber(Math.round(color.r ?? 0), 0, 255),
+    g: clampNumber(Math.round(color.g ?? 0), 0, 255),
+    b: clampNumber(Math.round(color.b ?? 0), 0, 255),
+    a: clampNumber(Math.round(color.a ?? 255), 0, 255)
+  };
+}
+
+function packColor(color) {
+  const normalized = normalizeColor(color);
+  return (
+    (normalized.r & 255) |
+    ((normalized.g & 255) << 8) |
+    ((normalized.b & 255) << 16) |
+    ((normalized.a & 255) << 24)
+  ) >>> 0;
+}
+
+function unpackColor(value) {
+  const packed = (value ?? 0) >>> 0;
+  return {
+    r: packed & 255,
+    g: (packed >>> 8) & 255,
+    b: (packed >>> 16) & 255,
+    a: (packed >>> 24) & 255
+  };
+}
+
+function rgbToHex(color) {
+  const normalized = normalizeColor(color);
+  return (
+    "#" +
+    [normalized.r, normalized.g, normalized.b]
+      .map((channel) => channel.toString(16).padStart(2, "0"))
+      .join("")
+  );
+}
+
+function hexToRgb(hex) {
+  if (typeof hex !== "string") {
+    return { r: 255, g: 255, b: 255 };
+  }
+  const sanitized = hex.replace("#", "");
+  if (sanitized.length !== 6) {
+    return { r: 255, g: 255, b: 255 };
+  }
+  const value = Number.parseInt(sanitized, 16);
+  return {
+    r: (value >> 16) & 255,
+    g: (value >> 8) & 255,
+    b: value & 255
+  };
+}
+
 const TAR_BLOCK_SIZE = 512;
 
 function writeTarString(buffer, offset, value, length) {
@@ -103,6 +165,38 @@ function useWasmApi() {
         getGravityMultiplier: wrap("web_get_gravity_multiplier", "number", []),
         setTimeStepMultiplier: wrap("web_set_time_step_multiplier", null, ["number"]),
         getTimeStepMultiplier: wrap("web_get_time_step_multiplier", "number", []),
+        setThreadsAmount: wrap("web_set_threads_amount", null, ["number"]),
+        getThreadsAmount: wrap("web_get_threads_amount", "number", []),
+        setDomainWidth: wrap("web_set_domain_width", null, ["number"]),
+        getDomainWidth: wrap("web_get_domain_width", "number", []),
+        setDomainHeight: wrap("web_set_domain_height", null, ["number"]),
+        getDomainHeight: wrap("web_get_domain_height", "number", []),
+        setBlackHoleInitMass: wrap("web_set_black_hole_init_mass", null, ["number"]),
+        getBlackHoleInitMass: wrap("web_get_black_hole_init_mass", "number", []),
+        setAmbientTemperature: wrap("web_set_ambient_temperature", null, ["number"]),
+        getAmbientTemperature: wrap("web_get_ambient_temperature", "number", []),
+        setAmbientHeatRate: wrap("web_set_ambient_heat_rate", null, ["number"]),
+        getAmbientHeatRate: wrap("web_get_ambient_heat_rate", "number", []),
+        setHeatConductivity: wrap("web_set_heat_conductivity", null, ["number"]),
+        getHeatConductivity: wrap("web_get_heat_conductivity", "number", []),
+        setConstraintStiffness: wrap("web_set_constraint_stiffness", null, ["number"]),
+        getConstraintStiffness: wrap("web_get_constraint_stiffness", "number", []),
+        setConstraintResistance: wrap("web_set_constraint_resistance", null, ["number"]),
+        getConstraintResistance: wrap("web_get_constraint_resistance", "number", []),
+        setFluidVerticalGravity: wrap("web_set_fluid_vertical_gravity", null, ["number"]),
+        getFluidVerticalGravity: wrap("web_get_fluid_vertical_gravity", "number", []),
+        setFluidMassMultiplier: wrap("web_set_fluid_mass_multiplier", null, ["number"]),
+        getFluidMassMultiplier: wrap("web_get_fluid_mass_multiplier", "number", []),
+        setFluidViscosity: wrap("web_set_fluid_viscosity", null, ["number"]),
+        getFluidViscosity: wrap("web_get_fluid_viscosity", "number", []),
+        setFluidStiffness: wrap("web_set_fluid_stiffness", null, ["number"]),
+        getFluidStiffness: wrap("web_get_fluid_stiffness", "number", []),
+        setFluidCohesion: wrap("web_set_fluid_cohesion", null, ["number"]),
+        getFluidCohesion: wrap("web_get_fluid_cohesion", "number", []),
+        setFluidDelta: wrap("web_set_fluid_delta", null, ["number"]),
+        getFluidDelta: wrap("web_get_fluid_delta", "number", []),
+        setFluidMaxVelocity: wrap("web_set_fluid_max_velocity", null, ["number"]),
+        getFluidMaxVelocity: wrap("web_get_fluid_max_velocity", "number", []),
         setUiHover: wrap("web_set_ui_hover", null, ["number"]),
         setToolDrawParticles: wrap("web_set_tool_draw_particles", null, ["number"]),
         getToolDrawParticles: wrap("web_get_tool_draw_particles", "number", []),
@@ -158,6 +252,62 @@ function useWasmApi() {
         getTheta: wrap("web_get_theta", "number", []),
         setSoftening: wrap("web_set_softening", null, ["number"]),
         getSoftening: wrap("web_get_softening", "number", []),
+        setOpticsEnabled: wrap("web_set_optics_enabled", null, ["number"]),
+        getOpticsEnabled: wrap("web_get_optics_enabled", "number", []),
+        setLightGain: wrap("web_set_light_gain", null, ["number"]),
+        getLightGain: wrap("web_get_light_gain", "number", []),
+        setLightSpread: wrap("web_set_light_spread", null, ["number"]),
+        getLightSpread: wrap("web_get_light_spread", "number", []),
+        setWallSpecularRoughness: wrap("web_set_wall_specular_roughness", null, ["number"]),
+        getWallSpecularRoughness: wrap("web_get_wall_specular_roughness", "number", []),
+        setWallRefractionRoughness: wrap("web_set_wall_refraction_roughness", null, ["number"]),
+        getWallRefractionRoughness: wrap("web_get_wall_refraction_roughness", "number", []),
+        setWallRefractionAmount: wrap("web_set_wall_refraction_amount", null, ["number"]),
+        getWallRefractionAmount: wrap("web_get_wall_refraction_amount", "number", []),
+        setWallIor: wrap("web_set_wall_ior", null, ["number"]),
+        getWallIor: wrap("web_get_wall_ior", "number", []),
+        setWallDispersion: wrap("web_set_wall_dispersion", null, ["number"]),
+        getWallDispersion: wrap("web_get_wall_dispersion", "number", []),
+        setWallEmissionGain: wrap("web_set_wall_emission_gain", null, ["number"]),
+        getWallEmissionGain: wrap("web_get_wall_emission_gain", "number", []),
+        setShapeRelaxIter: wrap("web_set_shape_relax_iter", null, ["number"]),
+        getShapeRelaxIter: wrap("web_get_shape_relax_iter", "number", []),
+        setShapeRelaxFactor: wrap("web_set_shape_relax_factor", null, ["number"]),
+        getShapeRelaxFactor: wrap("web_get_shape_relax_factor", "number", []),
+        setMaxSamples: wrap("web_set_max_samples", null, ["number"]),
+        getMaxSamples: wrap("web_get_max_samples", "number", []),
+        setSampleRaysAmount: wrap("web_set_sample_rays_amount", null, ["number"]),
+        getSampleRaysAmount: wrap("web_get_sample_rays_amount", "number", []),
+        setMaxBounces: wrap("web_set_max_bounces", null, ["number"]),
+        getMaxBounces: wrap("web_get_max_bounces", "number", []),
+        setDiffuseEnabled: wrap("web_set_diffuse_enabled", null, ["number"]),
+        getDiffuseEnabled: wrap("web_get_diffuse_enabled", "number", []),
+        setSpecularEnabled: wrap("web_set_specular_enabled", null, ["number"]),
+        getSpecularEnabled: wrap("web_get_specular_enabled", "number", []),
+        setRefractionEnabled: wrap("web_set_refraction_enabled", null, ["number"]),
+        getRefractionEnabled: wrap("web_get_refraction_enabled", "number", []),
+        setDispersionEnabled: wrap("web_set_dispersion_enabled", null, ["number"]),
+        getDispersionEnabled: wrap("web_get_dispersion_enabled", "number", []),
+        setEmissionEnabled: wrap("web_set_emission_enabled", null, ["number"]),
+        getEmissionEnabled: wrap("web_get_emission_enabled", "number", []),
+        setSymmetricalLens: wrap("web_set_symmetrical_lens", null, ["number"]),
+        getSymmetricalLens: wrap("web_get_symmetrical_lens", "number", []),
+        setDrawNormals: wrap("web_set_draw_normals", null, ["number"]),
+        getDrawNormals: wrap("web_get_draw_normals", "number", []),
+        setRelaxMove: wrap("web_set_relax_move", null, ["number"]),
+        getRelaxMove: wrap("web_get_relax_move", "number", []),
+        setLightColor: wrap("web_set_light_color", null, ["number"]),
+        getLightColor: wrap("web_get_light_color", "number", []),
+        setWallBaseColor: wrap("web_set_wall_base_color", null, ["number"]),
+        getWallBaseColor: wrap("web_get_wall_base_color", "number", []),
+        setWallSpecularColor: wrap("web_set_wall_specular_color", null, ["number"]),
+        getWallSpecularColor: wrap("web_get_wall_specular_color", "number", []),
+        setWallRefractionColor: wrap("web_set_wall_refraction_color", null, ["number"]),
+        getWallRefractionColor: wrap("web_get_wall_refraction_color", "number", []),
+        setWallEmissionColor: wrap("web_set_wall_emission_color", null, ["number"]),
+        getWallEmissionColor: wrap("web_get_wall_emission_color", "number", []),
+        getLightingSamples: wrap("web_get_lighting_samples", "number", []),
+        resetLightingSamples: wrap("web_reset_lighting_samples", null, []),
         setWindowSize: wrap("web_set_window_size", null, ["number", "number"]),
         setPauseAfterRecording: wrap("web_set_pause_after_recording", null, ["number"]),
         getPauseAfterRecording: wrap("web_get_pause_after_recording", "number", []),
@@ -358,6 +508,37 @@ function LogIntSlider({ label, value, max, onChange, tooltip }) {
   `;
 }
 
+function ColorPicker({ label, color, onChange }) {
+  const normalized = normalizeColor(color);
+  const hexValue = rgbToHex(normalized);
+  return html`
+    <div style=${{ marginBottom: 12 }}>
+      <label style=${{ display: "flex", flexDirection: "column", gap: 6, marginBottom: 6 }}>
+        <span>${label}</span>
+        <div style=${{ display: "flex", alignItems: "center", gap: 10 }}>
+          <input
+            type="color"
+            value=${hexValue}
+            onChange=${(e) => {
+              const rgb = hexToRgb(e.target.value);
+              onChange({ ...normalized, ...rgb });
+            }}
+          />
+          <span style=${{ color: "#9aa4b2", fontSize: 12 }}>${hexValue.toUpperCase()}</span>
+        </div>
+      </label>
+      <${IntSlider}
+        label="${label} Alpha"
+        value=${normalized.a}
+        min=${0}
+        max=${255}
+        step=${1}
+        onChange=${(val) => onChange({ ...normalized, a: val })}
+      />
+    </div>
+  `;
+}
+
 function App() {
   const api = useWasmApi();
   const defaultColorMode = 2;
@@ -375,6 +556,61 @@ function App() {
   const [particleSizeMultiplier, setParticleSizeMultiplier] = useState(storedState.particleSizeMultiplier ?? 1.0);
   const [theta, setTheta] = useState(storedState.theta ?? 0.8);
   const [softening, setSoftening] = useState(storedState.softening ?? 2.5);
+  const [glowEnabled, setGlowEnabled] = useState(storedState.glowEnabled ?? false);
+  const [threadsAmount, setThreadsAmount] = useState(storedState.threadsAmount ?? 1);
+  const [domainWidth, setDomainWidth] = useState(storedState.domainWidth ?? 3840);
+  const [domainHeight, setDomainHeight] = useState(storedState.domainHeight ?? 2160);
+  const [blackHoleInitMass, setBlackHoleInitMass] = useState(storedState.blackHoleInitMass ?? 1.0);
+  const [ambientTemperature, setAmbientTemperature] = useState(storedState.ambientTemperature ?? 274.0);
+  const [ambientHeatRate, setAmbientHeatRate] = useState(storedState.ambientHeatRate ?? 1.0);
+  const [heatConductivity, setHeatConductivity] = useState(storedState.heatConductivity ?? 0.045);
+  const [constraintStiffness, setConstraintStiffness] = useState(storedState.constraintStiffness ?? 1.0);
+  const [constraintResistance, setConstraintResistance] = useState(storedState.constraintResistance ?? 1.0);
+  const [fluidVerticalGravity, setFluidVerticalGravity] = useState(storedState.fluidVerticalGravity ?? 3.0);
+  const [fluidMassMultiplier, setFluidMassMultiplier] = useState(storedState.fluidMassMultiplier ?? 0.03);
+  const [fluidViscosity, setFluidViscosity] = useState(storedState.fluidViscosity ?? 0.1);
+  const [fluidStiffness, setFluidStiffness] = useState(storedState.fluidStiffness ?? 1.0);
+  const [fluidCohesion, setFluidCohesion] = useState(storedState.fluidCohesion ?? 1.0);
+  const [fluidDelta, setFluidDelta] = useState(storedState.fluidDelta ?? 9500.0);
+  const [fluidMaxVelocity, setFluidMaxVelocity] = useState(storedState.fluidMaxVelocity ?? 250.0);
+  const [opticsEnabled, setOpticsEnabled] = useState(storedState.opticsEnabled ?? false);
+  const [lightGain, setLightGain] = useState(storedState.lightGain ?? 0.25);
+  const [lightSpread, setLightSpread] = useState(storedState.lightSpread ?? 0.85);
+  const [wallSpecularRoughness, setWallSpecularRoughness] = useState(storedState.wallSpecularRoughness ?? 0.5);
+  const [wallRefractionRoughness, setWallRefractionRoughness] = useState(storedState.wallRefractionRoughness ?? 0.0);
+  const [wallRefractionAmount, setWallRefractionAmount] = useState(storedState.wallRefractionAmount ?? 0.0);
+  const [wallIor, setWallIor] = useState(storedState.wallIor ?? 1.5);
+  const [wallDispersion, setWallDispersion] = useState(storedState.wallDispersion ?? 0.0);
+  const [wallEmissionGain, setWallEmissionGain] = useState(storedState.wallEmissionGain ?? 0.0);
+  const [shapeRelaxIter, setShapeRelaxIter] = useState(storedState.shapeRelaxIter ?? 15);
+  const [shapeRelaxFactor, setShapeRelaxFactor] = useState(storedState.shapeRelaxFactor ?? 0.65);
+  const [maxSamples, setMaxSamples] = useState(storedState.maxSamples ?? 500);
+  const [sampleRaysAmount, setSampleRaysAmount] = useState(storedState.sampleRaysAmount ?? 1024);
+  const [maxBounces, setMaxBounces] = useState(storedState.maxBounces ?? 3);
+  const [diffuseEnabled, setDiffuseEnabled] = useState(storedState.diffuseEnabled ?? true);
+  const [specularEnabled, setSpecularEnabled] = useState(storedState.specularEnabled ?? true);
+  const [refractionEnabled, setRefractionEnabled] = useState(storedState.refractionEnabled ?? true);
+  const [dispersionEnabled, setDispersionEnabled] = useState(storedState.dispersionEnabled ?? true);
+  const [emissionEnabled, setEmissionEnabled] = useState(storedState.emissionEnabled ?? true);
+  const [symmetricalLens, setSymmetricalLens] = useState(storedState.symmetricalLens ?? false);
+  const [drawNormals, setDrawNormals] = useState(storedState.drawNormals ?? false);
+  const [relaxMove, setRelaxMove] = useState(storedState.relaxMove ?? false);
+  const [lightColor, setLightColor] = useState(
+    normalizeColor(storedState.lightColor ?? { r: 255, g: 255, b: 255, a: 64 })
+  );
+  const [wallBaseColor, setWallBaseColor] = useState(
+    normalizeColor(storedState.wallBaseColor ?? { r: 200, g: 200, b: 200, a: 255 })
+  );
+  const [wallSpecularColor, setWallSpecularColor] = useState(
+    normalizeColor(storedState.wallSpecularColor ?? { r: 255, g: 255, b: 255, a: 255 })
+  );
+  const [wallRefractionColor, setWallRefractionColor] = useState(
+    normalizeColor(storedState.wallRefractionColor ?? { r: 255, g: 255, b: 255, a: 255 })
+  );
+  const [wallEmissionColor, setWallEmissionColor] = useState(
+    normalizeColor(storedState.wallEmissionColor ?? { r: 255, g: 255, b: 255, a: 0 })
+  );
+  const [lightingSamples, setLightingSamples] = useState(0);
   const [drawQuadtree, setDrawQuadtree] = useState(storedState.drawQuadtree ?? false);
   const [drawZCurves, setDrawZCurves] = useState(storedState.drawZCurves ?? false);
   const [toolDrawParticles, setToolDrawParticles] = useState(storedState.toolDrawParticles ?? false);
@@ -439,6 +675,7 @@ function App() {
   const [activeParamTab, setActiveParamTab] = useState(initialActiveTab);
   const [actionChoice, setActionChoice] = useState("");
   const hoverCount = useRef(0);
+  const lightingProgress = maxSamples > 0 ? Math.min(lightingSamples / maxSamples, 1) : 0;
 
   const controlsList = useMemo(
     () => [
@@ -780,6 +1017,22 @@ function App() {
     setToolSelectOptics(false);
   };
 
+  const ensureTrailsVisible = () => {
+    if (!api) return;
+    let nextLength = trailsLength;
+    let nextThickness = trailsThickness;
+    if (nextLength <= 0) {
+      nextLength = defaultTrailsLength;
+      setTrailsLength(nextLength);
+      api.setTrailsLength(nextLength);
+    }
+    if (nextThickness <= 0) {
+      nextThickness = 0.1;
+      setTrailsThickness(nextThickness);
+      api.setTrailsThickness(nextThickness);
+    }
+  };
+
   useEffect(() => {
     if (!api) return;
 
@@ -789,6 +1042,20 @@ function App() {
       typeof stored[key] === "boolean" ? stored[key] : fallback;
     const getNum = (key, fallback) =>
       Number.isFinite(stored[key]) ? stored[key] : fallback;
+    const getColor = (key, fallback) => {
+      const value = stored[key];
+      if (
+        value &&
+        typeof value === "object" &&
+        Number.isFinite(value.r) &&
+        Number.isFinite(value.g) &&
+        Number.isFinite(value.b) &&
+        Number.isFinite(value.a)
+      ) {
+        return normalizeColor(value);
+      }
+      return normalizeColor(fallback);
+    };
 
     const timePlayingValue = getBool("timePlaying", api.getTimePlaying() === 1);
     setTimePlaying(timePlayingValue);
@@ -817,6 +1084,185 @@ function App() {
     const softeningValue = getNum("softening", api.getSoftening());
     setSoftening(softeningValue);
     api.setSoftening(softeningValue);
+
+    const glowEnabledValue = getBool("glowEnabled", api.getGlowEnabled() === 1);
+    setGlowEnabled(glowEnabledValue);
+    api.setGlowEnabled(glowEnabledValue ? 1 : 0);
+
+    const threadsAmountValue = getNum("threadsAmount", api.getThreadsAmount());
+    setThreadsAmount(threadsAmountValue);
+    api.setThreadsAmount(threadsAmountValue);
+
+    const domainWidthValue = getNum("domainWidth", api.getDomainWidth());
+    setDomainWidth(domainWidthValue);
+    api.setDomainWidth(domainWidthValue);
+
+    const domainHeightValue = getNum("domainHeight", api.getDomainHeight());
+    setDomainHeight(domainHeightValue);
+    api.setDomainHeight(domainHeightValue);
+
+    const blackHoleInitMassValue = getNum("blackHoleInitMass", api.getBlackHoleInitMass());
+    setBlackHoleInitMass(blackHoleInitMassValue);
+    api.setBlackHoleInitMass(blackHoleInitMassValue);
+
+    const ambientTemperatureValue = getNum("ambientTemperature", api.getAmbientTemperature());
+    setAmbientTemperature(ambientTemperatureValue);
+    api.setAmbientTemperature(ambientTemperatureValue);
+
+    const ambientHeatRateValue = getNum("ambientHeatRate", api.getAmbientHeatRate());
+    setAmbientHeatRate(ambientHeatRateValue);
+    api.setAmbientHeatRate(ambientHeatRateValue);
+
+    const heatConductivityValue = getNum("heatConductivity", api.getHeatConductivity());
+    setHeatConductivity(heatConductivityValue);
+    api.setHeatConductivity(heatConductivityValue);
+
+    const constraintStiffnessValue = getNum("constraintStiffness", api.getConstraintStiffness());
+    setConstraintStiffness(constraintStiffnessValue);
+    api.setConstraintStiffness(constraintStiffnessValue);
+
+    const constraintResistanceValue = getNum("constraintResistance", api.getConstraintResistance());
+    setConstraintResistance(constraintResistanceValue);
+    api.setConstraintResistance(constraintResistanceValue);
+
+    const fluidVerticalGravityValue = getNum("fluidVerticalGravity", api.getFluidVerticalGravity());
+    setFluidVerticalGravity(fluidVerticalGravityValue);
+    api.setFluidVerticalGravity(fluidVerticalGravityValue);
+
+    const fluidMassMultiplierValue = getNum("fluidMassMultiplier", api.getFluidMassMultiplier());
+    setFluidMassMultiplier(fluidMassMultiplierValue);
+    api.setFluidMassMultiplier(fluidMassMultiplierValue);
+
+    const fluidViscosityValue = getNum("fluidViscosity", api.getFluidViscosity());
+    setFluidViscosity(fluidViscosityValue);
+    api.setFluidViscosity(fluidViscosityValue);
+
+    const fluidStiffnessValue = getNum("fluidStiffness", api.getFluidStiffness());
+    setFluidStiffness(fluidStiffnessValue);
+    api.setFluidStiffness(fluidStiffnessValue);
+
+    const fluidCohesionValue = getNum("fluidCohesion", api.getFluidCohesion());
+    setFluidCohesion(fluidCohesionValue);
+    api.setFluidCohesion(fluidCohesionValue);
+
+    const fluidDeltaValue = getNum("fluidDelta", api.getFluidDelta());
+    setFluidDelta(fluidDeltaValue);
+    api.setFluidDelta(fluidDeltaValue);
+
+    const fluidMaxVelocityValue = getNum("fluidMaxVelocity", api.getFluidMaxVelocity());
+    setFluidMaxVelocity(fluidMaxVelocityValue);
+    api.setFluidMaxVelocity(fluidMaxVelocityValue);
+
+    const opticsEnabledValue = getBool("opticsEnabled", api.getOpticsEnabled() === 1);
+    setOpticsEnabled(opticsEnabledValue);
+    api.setOpticsEnabled(opticsEnabledValue ? 1 : 0);
+
+    const lightGainValue = getNum("lightGain", api.getLightGain());
+    setLightGain(lightGainValue);
+    api.setLightGain(lightGainValue);
+
+    const lightSpreadValue = getNum("lightSpread", api.getLightSpread());
+    setLightSpread(lightSpreadValue);
+    api.setLightSpread(lightSpreadValue);
+
+    const wallSpecularRoughnessValue = getNum("wallSpecularRoughness", api.getWallSpecularRoughness());
+    setWallSpecularRoughness(wallSpecularRoughnessValue);
+    api.setWallSpecularRoughness(wallSpecularRoughnessValue);
+
+    const wallRefractionRoughnessValue = getNum("wallRefractionRoughness", api.getWallRefractionRoughness());
+    setWallRefractionRoughness(wallRefractionRoughnessValue);
+    api.setWallRefractionRoughness(wallRefractionRoughnessValue);
+
+    const wallRefractionAmountValue = getNum("wallRefractionAmount", api.getWallRefractionAmount());
+    setWallRefractionAmount(wallRefractionAmountValue);
+    api.setWallRefractionAmount(wallRefractionAmountValue);
+
+    const wallIorValue = getNum("wallIor", api.getWallIor());
+    setWallIor(wallIorValue);
+    api.setWallIor(wallIorValue);
+
+    const wallDispersionValue = getNum("wallDispersion", api.getWallDispersion());
+    setWallDispersion(wallDispersionValue);
+    api.setWallDispersion(wallDispersionValue);
+
+    const wallEmissionGainValue = getNum("wallEmissionGain", api.getWallEmissionGain());
+    setWallEmissionGain(wallEmissionGainValue);
+    api.setWallEmissionGain(wallEmissionGainValue);
+
+    const shapeRelaxIterValue = getNum("shapeRelaxIter", api.getShapeRelaxIter());
+    setShapeRelaxIter(shapeRelaxIterValue);
+    api.setShapeRelaxIter(shapeRelaxIterValue);
+
+    const shapeRelaxFactorValue = getNum("shapeRelaxFactor", api.getShapeRelaxFactor());
+    setShapeRelaxFactor(shapeRelaxFactorValue);
+    api.setShapeRelaxFactor(shapeRelaxFactorValue);
+
+    const maxSamplesValue = getNum("maxSamples", api.getMaxSamples());
+    setMaxSamples(maxSamplesValue);
+    api.setMaxSamples(maxSamplesValue);
+
+    const sampleRaysAmountValue = getNum("sampleRaysAmount", api.getSampleRaysAmount());
+    setSampleRaysAmount(sampleRaysAmountValue);
+    api.setSampleRaysAmount(sampleRaysAmountValue);
+
+    const maxBouncesValue = getNum("maxBounces", api.getMaxBounces());
+    setMaxBounces(maxBouncesValue);
+    api.setMaxBounces(maxBouncesValue);
+
+    const diffuseEnabledValue = getBool("diffuseEnabled", api.getDiffuseEnabled() === 1);
+    setDiffuseEnabled(diffuseEnabledValue);
+    api.setDiffuseEnabled(diffuseEnabledValue ? 1 : 0);
+
+    const specularEnabledValue = getBool("specularEnabled", api.getSpecularEnabled() === 1);
+    setSpecularEnabled(specularEnabledValue);
+    api.setSpecularEnabled(specularEnabledValue ? 1 : 0);
+
+    const refractionEnabledValue = getBool("refractionEnabled", api.getRefractionEnabled() === 1);
+    setRefractionEnabled(refractionEnabledValue);
+    api.setRefractionEnabled(refractionEnabledValue ? 1 : 0);
+
+    const dispersionEnabledValue = getBool("dispersionEnabled", api.getDispersionEnabled() === 1);
+    setDispersionEnabled(dispersionEnabledValue);
+    api.setDispersionEnabled(dispersionEnabledValue ? 1 : 0);
+
+    const emissionEnabledValue = getBool("emissionEnabled", api.getEmissionEnabled() === 1);
+    setEmissionEnabled(emissionEnabledValue);
+    api.setEmissionEnabled(emissionEnabledValue ? 1 : 0);
+
+    const symmetricalLensValue = getBool("symmetricalLens", api.getSymmetricalLens() === 1);
+    setSymmetricalLens(symmetricalLensValue);
+    api.setSymmetricalLens(symmetricalLensValue ? 1 : 0);
+
+    const drawNormalsValue = getBool("drawNormals", api.getDrawNormals() === 1);
+    setDrawNormals(drawNormalsValue);
+    api.setDrawNormals(drawNormalsValue ? 1 : 0);
+
+    const relaxMoveValue = getBool("relaxMove", api.getRelaxMove() === 1);
+    setRelaxMove(relaxMoveValue);
+    api.setRelaxMove(relaxMoveValue ? 1 : 0);
+
+    const lightColorValue = getColor("lightColor", unpackColor(api.getLightColor()));
+    setLightColor(lightColorValue);
+    api.setLightColor(packColor(lightColorValue));
+
+    const wallBaseColorValue = getColor("wallBaseColor", unpackColor(api.getWallBaseColor()));
+    setWallBaseColor(wallBaseColorValue);
+    api.setWallBaseColor(packColor(wallBaseColorValue));
+
+    const wallSpecularColorValue = getColor("wallSpecularColor", unpackColor(api.getWallSpecularColor()));
+    setWallSpecularColor(wallSpecularColorValue);
+    api.setWallSpecularColor(packColor(wallSpecularColorValue));
+
+    const wallRefractionColorValue = getColor("wallRefractionColor", unpackColor(api.getWallRefractionColor()));
+    setWallRefractionColor(wallRefractionColorValue);
+    api.setWallRefractionColor(packColor(wallRefractionColorValue));
+
+    const wallEmissionColorValue = getColor("wallEmissionColor", unpackColor(api.getWallEmissionColor()));
+    setWallEmissionColor(wallEmissionColorValue);
+    api.setWallEmissionColor(packColor(wallEmissionColorValue));
+
+    const lightingSamplesValue = api.getLightingSamples();
+    setLightingSamples(lightingSamplesValue);
 
     const drawQuadtreeValue = getBool("drawQuadtree", api.getDrawQuadtree() === 1);
     setDrawQuadtree(drawQuadtreeValue);
@@ -890,15 +1336,11 @@ function App() {
     setToolSelectOptics(toolSelectOpticsValue);
     api.setToolSelectOptics(toolSelectOpticsValue ? 1 : 0);
 
-    api.setGlowEnabled(0);
-
     const trailsLengthValue = getNum("trailsLength", hasStored ? defaultTrailsLength : api.getTrailsLength());
-    setTrailsLength(trailsLengthValue);
-    api.setTrailsLength(trailsLengthValue);
+    let nextTrailsLength = trailsLengthValue;
 
     const trailsThicknessValue = getNum("trailsThickness", api.getTrailsThickness());
-    setTrailsThickness(trailsThicknessValue);
-    api.setTrailsThickness(trailsThicknessValue);
+    let nextTrailsThickness = trailsThicknessValue;
 
     const globalTrailsValue = getBool("globalTrails", api.getGlobalTrails() === 1);
     setGlobalTrails(globalTrailsValue);
@@ -907,6 +1349,19 @@ function App() {
     const selectedTrailsValue = getBool("selectedTrails", api.getSelectedTrails() === 1);
     setSelectedTrails(selectedTrailsValue);
     api.setSelectedTrails(selectedTrailsValue ? 1 : 0);
+
+    if ((globalTrailsValue || selectedTrailsValue) && nextTrailsLength <= 0) {
+      nextTrailsLength = defaultTrailsLength;
+    }
+    if ((globalTrailsValue || selectedTrailsValue) && nextTrailsThickness <= 0) {
+      nextTrailsThickness = 0.1;
+    }
+
+    setTrailsLength(nextTrailsLength);
+    api.setTrailsLength(nextTrailsLength);
+
+    setTrailsThickness(nextTrailsThickness);
+    api.setTrailsThickness(nextTrailsThickness);
 
     const localTrailsValue = getBool("localTrails", api.getLocalTrails() === 1);
     setLocalTrails(localTrailsValue);
@@ -1014,6 +1469,50 @@ function App() {
       particleSizeMultiplier,
       theta,
       softening,
+      glowEnabled,
+      threadsAmount,
+      domainWidth,
+      domainHeight,
+      blackHoleInitMass,
+      ambientTemperature,
+      ambientHeatRate,
+      heatConductivity,
+      constraintStiffness,
+      constraintResistance,
+      fluidVerticalGravity,
+      fluidMassMultiplier,
+      fluidViscosity,
+      fluidStiffness,
+      fluidCohesion,
+      fluidDelta,
+      fluidMaxVelocity,
+      opticsEnabled,
+      lightGain,
+      lightSpread,
+      wallSpecularRoughness,
+      wallRefractionRoughness,
+      wallRefractionAmount,
+      wallIor,
+      wallDispersion,
+      wallEmissionGain,
+      shapeRelaxIter,
+      shapeRelaxFactor,
+      maxSamples,
+      sampleRaysAmount,
+      maxBounces,
+      diffuseEnabled,
+      specularEnabled,
+      refractionEnabled,
+      dispersionEnabled,
+      emissionEnabled,
+      symmetricalLens,
+      drawNormals,
+      relaxMove,
+      lightColor,
+      wallBaseColor,
+      wallSpecularColor,
+      wallRefractionColor,
+      wallEmissionColor,
       drawQuadtree,
       drawZCurves,
       toolDrawParticles,
@@ -1058,8 +1557,8 @@ function App() {
       parametersCollapsed,
       toolsCollapsed,
       settingsCollapsed,
-      activeParamTab
-    });
+    activeParamTab
+  });
   }, [
     timePlaying,
     timeStep,
@@ -1068,6 +1567,50 @@ function App() {
     particleSizeMultiplier,
     theta,
     softening,
+    glowEnabled,
+    threadsAmount,
+    domainWidth,
+    domainHeight,
+    blackHoleInitMass,
+    ambientTemperature,
+    ambientHeatRate,
+    heatConductivity,
+    constraintStiffness,
+    constraintResistance,
+    fluidVerticalGravity,
+    fluidMassMultiplier,
+    fluidViscosity,
+    fluidStiffness,
+    fluidCohesion,
+    fluidDelta,
+    fluidMaxVelocity,
+    opticsEnabled,
+    lightGain,
+    lightSpread,
+    wallSpecularRoughness,
+    wallRefractionRoughness,
+    wallRefractionAmount,
+    wallIor,
+    wallDispersion,
+    wallEmissionGain,
+    shapeRelaxIter,
+    shapeRelaxFactor,
+    maxSamples,
+    sampleRaysAmount,
+    maxBounces,
+    diffuseEnabled,
+    specularEnabled,
+    refractionEnabled,
+    dispersionEnabled,
+    emissionEnabled,
+    symmetricalLens,
+    drawNormals,
+    relaxMove,
+    lightColor,
+    wallBaseColor,
+    wallSpecularColor,
+    wallRefractionColor,
+    wallEmissionColor,
     drawQuadtree,
     drawZCurves,
     toolDrawParticles,
@@ -1114,6 +1657,15 @@ function App() {
     settingsCollapsed,
     activeParamTab
   ]);
+
+  useEffect(() => {
+    if (!api || (!opticsEnabled && activeParamTab !== "Optics")) return undefined;
+    const intervalId = setInterval(() => {
+      const samples = api.getLightingSamples();
+      setLightingSamples(samples);
+    }, 500);
+    return () => clearInterval(intervalId);
+  }, [api, opticsEnabled, activeParamTab]);
 
   useEffect(() => {
     const handlePointerMove = (event) => {
@@ -1213,6 +1765,11 @@ function App() {
               onHover=${updateHover}
               collapsed=${parametersCollapsed}
               onToggle=${() => setParametersCollapsed(!parametersCollapsed)}
+              contentStyle=${{
+                maxHeight: "70vh",
+                overflow: "auto",
+                paddingRight: 6
+              }}
             >
               ${activeParamTab === "Visuals" &&
               html`
@@ -1259,6 +1816,7 @@ function App() {
                   onChange=${(val) => {
                     setGlobalTrails(val);
                     if (val) {
+                      ensureTrailsVisible();
                       setSelectedTrails(false);
                       api?.setSelectedTrails(0);
                     }
@@ -1271,6 +1829,7 @@ function App() {
                   onChange=${(val) => {
                     setSelectedTrails(val);
                     if (val) {
+                      ensureTrailsVisible();
                       setGlobalTrails(false);
                       api?.setGlobalTrails(0);
                     }
@@ -1313,6 +1872,15 @@ function App() {
                   onChange=${(val) => {
                     setTrailsThickness(val);
                     api?.setTrailsThickness(val);
+                  }}
+                />
+                <${SectionTitle}>Effects</${SectionTitle}>
+                <${Toggle}
+                  label="Glow"
+                  value=${glowEnabled}
+                  onChange=${(val) => {
+                    setGlowEnabled(val);
+                    api?.setGlowEnabled(val ? 1 : 0);
                   }}
                 />
               `}
@@ -1411,38 +1979,569 @@ function App() {
                     : `Recording downloads a WebM file at ${Math.round(recordingFps)}fps.`}
                 </${Note}>
               `}
-              ${activeParamTab !== "Visuals" && activeParamTab !== "Recording" &&
+              ${activeParamTab === "Optics" &&
               html`
-                ${activeParamTab === "Physics" &&
-                html`
-                  <${SectionTitle}>Gravity Quality</${SectionTitle}>
-                  <${Slider}
-                    label="Theta (higher = faster, less accurate)"
-                    value=${theta}
-                    min=${0.1}
-                    max=${5}
-                    step=${0.05}
-                    tooltip="Barnes-Hut quality: lower is more accurate (slower), higher is faster."
-                    onChange=${(val) => {
-                      setTheta(val);
-                      api?.setTheta(val);
+                <${SectionTitle}>Optics</${SectionTitle}>
+                <${Toggle}
+                  label="Enable Optics"
+                  value=${opticsEnabled}
+                  onChange=${(val) => {
+                    setOpticsEnabled(val);
+                    api?.setOpticsEnabled(val ? 1 : 0);
+                  }}
+                />
+                <${SectionTitle}>Light</${SectionTitle}>
+                <${ColorPicker}
+                  label="Light Color"
+                  color=${lightColor}
+                  onChange=${(next) => {
+                    const normalized = normalizeColor(next);
+                    setLightColor(normalized);
+                    api?.setLightColor(packColor(normalized));
+                  }}
+                />
+                <${Slider}
+                  label="Light Gain"
+                  value=${lightGain}
+                  min=${0}
+                  max=${1}
+                  step=${0.01}
+                  tooltip="Controls lights brightness."
+                  onChange=${(val) => {
+                    setLightGain(val);
+                    api?.setLightGain(val);
+                  }}
+                />
+                <${Slider}
+                  label="Light Spread"
+                  value=${lightSpread}
+                  min=${0}
+                  max=${1}
+                  step=${0.01}
+                  tooltip="Controls the spread of area and cone lights."
+                  onChange=${(val) => {
+                    setLightSpread(val);
+                    api?.setLightSpread(val);
+                  }}
+                />
+                <${SectionTitle}>Wall Colors</${SectionTitle}>
+                <${ColorPicker}
+                  label="Wall Base Color"
+                  color=${wallBaseColor}
+                  onChange=${(next) => {
+                    const normalized = normalizeColor(next);
+                    setWallBaseColor(normalized);
+                    api?.setWallBaseColor(packColor(normalized));
+                  }}
+                />
+                <${ColorPicker}
+                  label="Wall Specular Color"
+                  color=${wallSpecularColor}
+                  onChange=${(next) => {
+                    const normalized = normalizeColor(next);
+                    setWallSpecularColor(normalized);
+                    api?.setWallSpecularColor(packColor(normalized));
+                  }}
+                />
+                <${ColorPicker}
+                  label="Wall Refraction Color"
+                  color=${wallRefractionColor}
+                  onChange=${(next) => {
+                    const normalized = normalizeColor(next);
+                    setWallRefractionColor(normalized);
+                    api?.setWallRefractionColor(packColor(normalized));
+                  }}
+                />
+                <${ColorPicker}
+                  label="Wall Emission Color"
+                  color=${wallEmissionColor}
+                  onChange=${(next) => {
+                    const normalized = normalizeColor(next);
+                    setWallEmissionColor(normalized);
+                    api?.setWallEmissionColor(packColor(normalized));
+                  }}
+                />
+                <${SectionTitle}>Wall Material</${SectionTitle}>
+                <${Slider}
+                  label="Wall Specular Roughness"
+                  value=${wallSpecularRoughness}
+                  min=${0}
+                  max=${1}
+                  step=${0.01}
+                  tooltip="Controls the specular reflections roughness of walls."
+                  onChange=${(val) => {
+                    setWallSpecularRoughness(val);
+                    api?.setWallSpecularRoughness(val);
+                  }}
+                />
+                <${Slider}
+                  label="Wall Refraction Roughness"
+                  value=${wallRefractionRoughness}
+                  min=${0}
+                  max=${1}
+                  step=${0.01}
+                  tooltip="Controls the refraction surface roughness of walls."
+                  onChange=${(val) => {
+                    setWallRefractionRoughness(val);
+                    api?.setWallRefractionRoughness(val);
+                  }}
+                />
+                <${Slider}
+                  label="Wall Refraction Amount"
+                  value=${wallRefractionAmount}
+                  min=${0}
+                  max=${1}
+                  step=${0.01}
+                  tooltip="Controls how much light walls will refract."
+                  onChange=${(val) => {
+                    setWallRefractionAmount(val);
+                    api?.setWallRefractionAmount(val);
+                  }}
+                />
+                <${Slider}
+                  label="Wall IOR"
+                  value=${wallIor}
+                  min=${0}
+                  max=${100}
+                  step=${0.1}
+                  tooltip="Controls the IOR of walls."
+                  onChange=${(val) => {
+                    setWallIor(val);
+                    api?.setWallIor(val);
+                  }}
+                />
+                <${Slider}
+                  label="Wall Dispersion"
+                  value=${wallDispersion}
+                  min=${0}
+                  max=${0.2}
+                  step=${0.001}
+                  tooltip="Controls how much light gets dispersed after refracting from this wall."
+                  onChange=${(val) => {
+                    setWallDispersion(val);
+                    api?.setWallDispersion(val);
+                  }}
+                />
+                <${Slider}
+                  label="Wall Emission Gain"
+                  value=${wallEmissionGain}
+                  min=${0}
+                  max=${1}
+                  step=${0.01}
+                  tooltip="Controls how much light walls emit."
+                  onChange=${(val) => {
+                    setWallEmissionGain(val);
+                    api?.setWallEmissionGain(val);
+                  }}
+                />
+                <${SectionTitle}>Shape Settings</${SectionTitle}>
+                <${IntSlider}
+                  label="Shape Relax Iter."
+                  value=${shapeRelaxIter}
+                  min=${0}
+                  max=${50}
+                  step=${1}
+                  tooltip="Controls the iterations used to relax the shapes when drawing."
+                  onChange=${(val) => {
+                    setShapeRelaxIter(val);
+                    api?.setShapeRelaxIter(val);
+                  }}
+                />
+                <${Slider}
+                  label="Shape Relax Factor"
+                  value=${shapeRelaxFactor}
+                  min=${0}
+                  max=${1}
+                  step=${0.01}
+                  tooltip="Controls how much the drawn shape should relax each iteration."
+                  onChange=${(val) => {
+                    setShapeRelaxFactor(val);
+                    api?.setShapeRelaxFactor(val);
+                  }}
+                />
+                <${SectionTitle}>Render Settings</${SectionTitle}>
+                <${LogIntSlider}
+                  label="Max Samples"
+                  value=${maxSamples}
+                  max=${2048}
+                  tooltip="Controls the total amount of lighting iterations."
+                  onChange=${(val) => {
+                    setMaxSamples(val);
+                    api?.setMaxSamples(val);
+                  }}
+                />
+                <${LogIntSlider}
+                  label="Rays Per Sample"
+                  value=${sampleRaysAmount}
+                  max=${8192}
+                  tooltip="Controls amount of rays emitted on each sample."
+                  onChange=${(val) => {
+                    setSampleRaysAmount(val);
+                    api?.setSampleRaysAmount(val);
+                  }}
+                />
+                <${IntSlider}
+                  label="Max Bounces"
+                  value=${maxBounces}
+                  min=${0}
+                  max=${16}
+                  step=${1}
+                  tooltip="Controls how many times rays can bounce."
+                  onChange=${(val) => {
+                    setMaxBounces(val);
+                    api?.setMaxBounces(val);
+                  }}
+                />
+                <${SectionTitle}>Accumulation</${SectionTitle}>
+                <div style=${{ display: "flex", justifyContent: "space-between", marginBottom: 8 }}>
+                  <span>Samples</span>
+                  <span style=${{ color: "#9aa4b2" }}>${Math.max(0, lightingSamples)} / ${maxSamples}</span>
+                </div>
+                <div
+                  style=${{
+                    height: 6,
+                    borderRadius: 999,
+                    background: "rgba(255,255,255,0.08)",
+                    overflow: "hidden",
+                    marginBottom: 10
+                  }}
+                >
+                  <div
+                    style=${{
+                      height: "100%",
+                      width: `${(lightingProgress * 100).toFixed(1)}%`,
+                      background: "rgba(159,178,255,0.6)"
                     }}
                   />
-                  <${Slider}
-                    label="Softening"
-                    value=${softening}
-                    min=${0.5}
-                    max=${30}
-                    step=${0.1}
-                    tooltip="Smooths gravity at short distances; higher is more stable but less sharp."
-                    onChange=${(val) => {
-                      setSoftening(val);
-                      api?.setSoftening(val);
-                    }}
-                  />
-                `}
-                <${Note}>${activeParamTab} parameters are not fully wired yet.</${Note}>
+                </div>
+                <${Button}
+                  label="Reset Accumulation"
+                  onClick=${() => {
+                    api?.resetLightingSamples();
+                    setLightingSamples(0);
+                  }}
+                />
+                <${SectionTitle}>Ray Features</${SectionTitle}>
+                <${Toggle}
+                  label="Global Illumination"
+                  value=${diffuseEnabled}
+                  onChange=${(val) => {
+                    setDiffuseEnabled(val);
+                    api?.setDiffuseEnabled(val ? 1 : 0);
+                  }}
+                />
+                <${Toggle}
+                  label="Specular Reflections"
+                  value=${specularEnabled}
+                  onChange=${(val) => {
+                    setSpecularEnabled(val);
+                    api?.setSpecularEnabled(val ? 1 : 0);
+                  }}
+                />
+                <${Toggle}
+                  label="Refraction"
+                  value=${refractionEnabled}
+                  onChange=${(val) => {
+                    setRefractionEnabled(val);
+                    api?.setRefractionEnabled(val ? 1 : 0);
+                  }}
+                />
+                <${Toggle}
+                  label="Dispersion"
+                  value=${dispersionEnabled}
+                  onChange=${(val) => {
+                    setDispersionEnabled(val);
+                    api?.setDispersionEnabled(val ? 1 : 0);
+                  }}
+                />
+                <${Toggle}
+                  label="Emission"
+                  value=${emissionEnabled}
+                  onChange=${(val) => {
+                    setEmissionEnabled(val);
+                    api?.setEmissionEnabled(val ? 1 : 0);
+                  }}
+                />
+                <${SectionTitle}>Misc</${SectionTitle}>
+                <${Toggle}
+                  label="Symmetrical Lens"
+                  value=${symmetricalLens}
+                  onChange=${(val) => {
+                    setSymmetricalLens(val);
+                    api?.setSymmetricalLens(val ? 1 : 0);
+                  }}
+                />
+                <${Toggle}
+                  label="Show Normals"
+                  value=${drawNormals}
+                  onChange=${(val) => {
+                    setDrawNormals(val);
+                    api?.setDrawNormals(val ? 1 : 0);
+                  }}
+                />
+                <${Toggle}
+                  label="Relax Shape When Moved"
+                  value=${relaxMove}
+                  onChange=${(val) => {
+                    setRelaxMove(val);
+                    api?.setRelaxMove(val ? 1 : 0);
+                  }}
+                />
               `}
+              ${activeParamTab === "Physics" &&
+              html`
+                <${SectionTitle}>System</${SectionTitle}>
+                <${IntSlider}
+                  label="Threads Amount"
+                  value=${threadsAmount}
+                  min=${1}
+                  max=${32}
+                  step=${1}
+                  tooltip="Controls the amount of threads used by the simulation. Half your total amount of threads is usually the sweet spot."
+                  onChange=${(val) => {
+                    setThreadsAmount(val);
+                    api?.setThreadsAmount(val);
+                  }}
+                />
+                <${SectionTitle}>Simulation</${SectionTitle}>
+                <${Slider}
+                  label="Theta"
+                  value=${theta}
+                  min=${0.1}
+                  max=${5}
+                  step=${0.05}
+                  tooltip="Controls the quality of the gravity calculation. Higher means lower quality."
+                  onChange=${(val) => {
+                    setTheta(val);
+                    api?.setTheta(val);
+                  }}
+                />
+                <${IntSlider}
+                  label="Domain Width"
+                  value=${domainWidth}
+                  min=${200}
+                  max=${3840}
+                  step=${10}
+                  tooltip="Controls the width of the global container."
+                  onChange=${(val) => {
+                    setDomainWidth(val);
+                    api?.setDomainWidth(val);
+                  }}
+                />
+                <${IntSlider}
+                  label="Domain Height"
+                  value=${domainHeight}
+                  min=${200}
+                  max=${2160}
+                  step=${10}
+                  tooltip="Controls the height of the global container."
+                  onChange=${(val) => {
+                    setDomainHeight(val);
+                    api?.setDomainHeight(val);
+                  }}
+                />
+                <${SectionTitle}>General Physics</${SectionTitle}>
+                <${Slider}
+                  label="Time Scale"
+                  value=${timeStep}
+                  min=${0}
+                  max=${15}
+                  step=${0.05}
+                  tooltip="Controls how fast time passes."
+                  onChange=${(val) => {
+                    setTimeStep(val);
+                    api?.setTimeStepMultiplier(val);
+                  }}
+                />
+                <${Slider}
+                  label="Softening"
+                  value=${softening}
+                  min=${0.5}
+                  max=${30}
+                  step=${0.1}
+                  tooltip="Controls the smoothness of the gravity forces."
+                  onChange=${(val) => {
+                    setSoftening(val);
+                    api?.setSoftening(val);
+                  }}
+                />
+                <${Slider}
+                  label="Gravity Strength"
+                  value=${gravity}
+                  min=${0}
+                  max=${100}
+                  step=${0.1}
+                  tooltip="Controls how much particles attract eachother."
+                  onChange=${(val) => {
+                    setGravity(val);
+                    api?.setGravityMultiplier(val);
+                  }}
+                />
+                <${Slider}
+                  label="Black Hole Init Mass"
+                  value=${blackHoleInitMass}
+                  min=${0.005}
+                  max=${15}
+                  step=${0.005}
+                  tooltip="Controls the mass of black holes when spawned."
+                  onChange=${(val) => {
+                    setBlackHoleInitMass(val);
+                    api?.setBlackHoleInitMass(val);
+                  }}
+                />
+                <${SectionTitle}>Temperature</${SectionTitle}>
+                <${IntSlider}
+                  label="Ambient Temperature"
+                  value=${ambientTemperature}
+                  min=${1}
+                  max=${2500}
+                  step=${1}
+                  tooltip="Controls the desired temperature of the scene in Kelvin. 1 is near absolute zero. The default value is set just high enough to allow liquid water."
+                  onChange=${(val) => {
+                    setAmbientTemperature(val);
+                    api?.setAmbientTemperature(val);
+                  }}
+                />
+                <${Slider}
+                  label="Ambient Heat Rate"
+                  value=${ambientHeatRate}
+                  min=${0}
+                  max=${10}
+                  step=${0.05}
+                  tooltip="Controls how fast particles' temperature try to match ambient temperature."
+                  onChange=${(val) => {
+                    setAmbientHeatRate(val);
+                    api?.setAmbientHeatRate(val);
+                  }}
+                />
+                <${Slider}
+                  label="Heat Conductivity Multiplier"
+                  value=${heatConductivity}
+                  min=${0.001}
+                  max=${1}
+                  step=${0.001}
+                  tooltip="Controls the global heat conductivity of particles."
+                  onChange=${(val) => {
+                    setHeatConductivity(val);
+                    api?.setHeatConductivity(val);
+                  }}
+                />
+                <${SectionTitle}>Constraints</${SectionTitle}>
+                <${Slider}
+                  label="Constraints Stiffness Multiplier"
+                  value=${constraintStiffness}
+                  min=${0.001}
+                  max=${3}
+                  step=${0.001}
+                  tooltip="Controls the global stiffness multiplier for constraints."
+                  onChange=${(val) => {
+                    setConstraintStiffness(val);
+                    api?.setConstraintStiffness(val);
+                  }}
+                />
+                <${Slider}
+                  label="Constraints Resistance Multiplier"
+                  value=${constraintResistance}
+                  min=${0.001}
+                  max=${30}
+                  step=${0.01}
+                  tooltip="Controls the global resistance multiplier for constraints."
+                  onChange=${(val) => {
+                    setConstraintResistance(val);
+                    api?.setConstraintResistance(val);
+                  }}
+                />
+                <${SectionTitle}>Fluids</${SectionTitle}>
+                <${Slider}
+                  label="Fluid Vertical Gravity"
+                  value=${fluidVerticalGravity}
+                  min=${0}
+                  max=${10}
+                  step=${0.1}
+                  tooltip="Controls the vertical gravity strength in Fluid Ground Mode."
+                  onChange=${(val) => {
+                    setFluidVerticalGravity(val);
+                    api?.setFluidVerticalGravity(val);
+                  }}
+                />
+                <${Slider}
+                  label="Fluid Mass Multiplier"
+                  value=${fluidMassMultiplier}
+                  min=${0.005}
+                  max=${0.15}
+                  step=${0.001}
+                  tooltip="Controls the fluid mass of particles."
+                  onChange=${(val) => {
+                    setFluidMassMultiplier(val);
+                    api?.setFluidMassMultiplier(val);
+                  }}
+                />
+                <${Slider}
+                  label="Fluid Viscosity"
+                  value=${fluidViscosity}
+                  min=${0.01}
+                  max=${15}
+                  step=${0.01}
+                  tooltip="Controls how viscous particles are."
+                  onChange=${(val) => {
+                    setFluidViscosity(val);
+                    api?.setFluidViscosity(val);
+                  }}
+                />
+                <${Slider}
+                  label="Fluid Stiffness"
+                  value=${fluidStiffness}
+                  min=${0.01}
+                  max=${15}
+                  step=${0.01}
+                  tooltip="Controls how stiff particles are."
+                  onChange=${(val) => {
+                    setFluidStiffness(val);
+                    api?.setFluidStiffness(val);
+                  }}
+                />
+                <${Slider}
+                  label="Fluid Cohesion"
+                  value=${fluidCohesion}
+                  min=${0}
+                  max=${10}
+                  step=${0.01}
+                  tooltip="Controls how sticky particles are."
+                  onChange=${(val) => {
+                    setFluidCohesion(val);
+                    api?.setFluidCohesion(val);
+                  }}
+                />
+                <${Slider}
+                  label="Fluid Delta"
+                  value=${fluidDelta}
+                  min=${500}
+                  max=${20000}
+                  step=${50}
+                  tooltip="Controls the scaling factor in the pressure solver to enforce fluid incompressibility."
+                  onChange=${(val) => {
+                    setFluidDelta(val);
+                    api?.setFluidDelta(val);
+                  }}
+                />
+                <${Slider}
+                  label="Fluid Max Velocity"
+                  value=${fluidMaxVelocity}
+                  min=${0}
+                  max=${2000}
+                  step=${10}
+                  tooltip="Controls the maximum velocity a particle can have in Fluid mode."
+                  onChange=${(val) => {
+                    setFluidMaxVelocity(val);
+                    api?.setFluidMaxVelocity(val);
+                  }}
+                />
+              `}
+              ${activeParamTab !== "Visuals" &&
+              activeParamTab !== "Recording" &&
+              activeParamTab !== "Optics" &&
+              activeParamTab !== "Physics" &&
+              html`<${Note}>${activeParamTab} parameters are not fully wired yet.</${Note}>`}
             </${Panel}>
           `}
         </div>
@@ -1809,29 +2908,13 @@ function App() {
             <${Toggle} label="Show Stats" value=${showStats} onChange=${setShowStats} />
 
             <${SectionTitle}>Simulation</${SectionTitle}>
-            <${Button}
-              label=${timePlaying ? "Pause" : "Continue"}
-              onClick=${() => {
-                const next = !timePlaying;
-                setTimePlaying(next);
-                api?.setTimePlaying(next ? 1 : 0);
-              }}
-            />
-            <${Toggle}
-              label="Play / Pause"
-              value=${timePlaying}
-              onChange=${(val) => {
-                setTimePlaying(val);
-                api?.setTimePlaying(val ? 1 : 0);
-              }}
-            />
             <${Slider}
               label="Time Step"
               value=${timeStep}
-              min=${0.1}
-              max=${5}
+              min=${0}
+              max=${15}
               step=${0.05}
-              tooltip="Simulation step size: higher is faster but less accurate."
+              tooltip="Controls how fast time passes."
               onChange=${(val) => {
                 setTimeStep(val);
                 api?.setTimeStepMultiplier(val);
@@ -1851,8 +2934,9 @@ function App() {
               label="Gravity Multiplier"
               value=${gravity}
               min=${0}
-              max=${5}
-              step=${0.05}
+              max=${100}
+              step=${0.1}
+              tooltip="Controls how much particles attract eachother."
               onChange=${(val) => {
                 setGravity(val);
                 api?.setGravityMultiplier(val);
@@ -1948,6 +3032,42 @@ function App() {
           <${Note}>Links open in a new tab.</${Note}>
         </${Panel}>
       `}
+
+      <div
+        style=${{
+          position: "absolute",
+          left: "50%",
+          bottom: 28,
+          transform: "translateX(-50%)",
+          zIndex: 3,
+          pointerEvents: "auto"
+        }}
+      >
+        <button
+          onClick=${() => {
+            const next = !timePlaying;
+            setTimePlaying(next);
+            api?.setTimePlaying(next ? 1 : 0);
+          }}
+          style=${{
+            display: "flex",
+            alignItems: "center",
+            gap: 10,
+            padding: "10px 18px",
+            borderRadius: 999,
+            border: "1px solid rgba(255,255,255,0.16)",
+            background: timePlaying ? "rgba(255,255,255,0.08)" : "rgba(159,178,255,0.2)",
+            color: "#e6edf3",
+            letterSpacing: "0.08em",
+            textTransform: "uppercase",
+            fontSize: 12,
+            cursor: "pointer",
+            boxShadow: "0 16px 30px rgba(0,0,0,0.35)"
+          }}
+        >
+          ${timePlaying ? "Pause" : "Play"}
+        </button>
+      </div>
 
     </${React.Fragment}>
   `;

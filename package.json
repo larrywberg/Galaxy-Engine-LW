@@ -15,6 +15,7 @@
     "wasm:build-run:release": "npm run wasm:configure:release && npm run wasm:build:release && npm run wasm:run:release",
     "wasm:reconfigure:release": "npm run wasm:clean && EM_CACHE=$PWD/build/emscripten_cache emcmake cmake --preset wasm-release -DFETCHCONTENT_UPDATES_DISCONNECTED=OFF -DFETCHCONTENT_FULLY_DISCONNECTED=OFF",
     "wasm:rebuild-run:release": "npm run wasm:reconfigure:release && npm run wasm:build:release && npm run wasm:run:release",
+    "wasm:deploy": "node scripts/deploy-wasm.js --delete",
     "dev": "npm run wasm:build-run",
     "release": "npm run wasm:build-run:release"
   }
