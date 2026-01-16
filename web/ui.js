@@ -7,6 +7,9 @@ const html = htm.bind(React.createElement);
 const uiRoot = document.getElementById("ui-root");
 const root = createRoot(uiRoot);
 const STORAGE_KEY = "galaxy-engine-ui-state-v1";
+const LOCAL_SCENES_KEY = "galaxy-engine-local-scenes-v1";
+const LOCAL_SCENE_PREFIX = "galaxy-engine-local-scene:";
+const LOCAL_SCENE_SCHEMA = "galaxy-engine-scene-ui-v1";
 const LEFT_TABS = ["Visuals", "Physics", "Advanced Stats", "Optics", "Sound", "Recording"];
 
 function loadUiState() {
@@ -24,6 +27,26 @@ function loadUiState() {
 function saveUiState(state) {
   try {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+  } catch (err) {
+    // Ignore storage failures (private mode, quota, etc.)
+  }
+}
+
+function loadLocalScenesIndex() {
+  try {
+    const raw = localStorage.getItem(LOCAL_SCENES_KEY);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw);
+    if (!Array.isArray(parsed)) return [];
+    return parsed.filter((entry) => entry && typeof entry.id === "string");
+  } catch (err) {
+    return [];
+  }
+}
+
+function saveLocalScenesIndex(list) {
+  try {
+    localStorage.setItem(LOCAL_SCENES_KEY, JSON.stringify(list));
   } catch (err) {
     // Ignore storage failures (private mode, quota, etc.)
   }
@@ -91,6 +114,14 @@ function hexToRgb(hex) {
   };
 }
 
+function formatBytes(bytes) {
+  if (!Number.isFinite(bytes) || bytes <= 0) return "0 B";
+  const units = ["B", "KB", "MB", "GB"];
+  const index = Math.min(units.length - 1, Math.floor(Math.log(bytes) / Math.log(1024)));
+  const value = bytes / Math.pow(1024, index);
+  return `${value.toFixed(value >= 10 || index === 0 ? 0 : 1)} ${units[index]}`;
+}
+
 const TAR_BLOCK_SIZE = 512;
 
 function writeTarString(buffer, offset, value, length) {
@@ -145,6 +176,89 @@ async function buildTar(files) {
   return new Blob(parts, { type: "application/x-tar" });
 }
 
+const EXPORT_COLOR_SPACE = "srgb";
+const DEFAULT_EXPORT_BG = "rgb(11, 14, 20)";
+
+function getOpaqueBackgroundColor(element) {
+  if (!element || !window.getComputedStyle) return "";
+  const color = window.getComputedStyle(element).backgroundColor;
+  if (!color || color === "transparent" || color === "rgba(0, 0, 0, 0)") {
+    return "";
+  }
+  return color;
+}
+
+function resolveCanvasBackground(canvas) {
+  if (!canvas) return DEFAULT_EXPORT_BG;
+  const candidates = [canvas, canvas.parentElement, document.body, document.documentElement];
+  for (const candidate of candidates) {
+    const color = getOpaqueBackgroundColor(candidate);
+    if (color) return color;
+  }
+  return DEFAULT_EXPORT_BG;
+}
+
+function getExportContext(surface) {
+  if (!surface) return null;
+  try {
+    return surface.getContext("2d", { alpha: false, colorSpace: EXPORT_COLOR_SPACE });
+  } catch (err) {
+    // Ignore unsupported color space options.
+  }
+  try {
+    return surface.getContext("2d", { alpha: false });
+  } catch (err) {
+    return surface.getContext("2d");
+  }
+}
+
+function prepareExportSurface(width, height, cache) {
+  if (!cache) return { canvas: null, ctx: null };
+  if (!cache.canvas) {
+    cache.canvas =
+      typeof OffscreenCanvas !== "undefined"
+        ? new OffscreenCanvas(width, height)
+        : document.createElement("canvas");
+  }
+  const surface = cache.canvas;
+  if (surface.width !== width) surface.width = width;
+  if (surface.height !== height) surface.height = height;
+  if (!cache.ctx || cache.ctx.canvas !== surface) {
+    cache.ctx = getExportContext(surface);
+  }
+  return cache;
+}
+
+async function exportCanvasPngBlob(canvas, cache) {
+  if (!canvas) return null;
+  const width = canvas.width;
+  const height = canvas.height;
+  if (!width || !height) return null;
+
+  const background = resolveCanvasBackground(canvas);
+  const surface = prepareExportSurface(width, height, cache);
+  const ctx = surface.ctx;
+  if (!ctx) {
+    return new Promise((resolve) => canvas.toBlob(resolve, "image/png"));
+  }
+
+  ctx.save();
+  ctx.globalCompositeOperation = "source-over";
+  ctx.fillStyle = background;
+  ctx.fillRect(0, 0, width, height);
+  ctx.drawImage(canvas, 0, 0, width, height);
+  ctx.restore();
+
+  const exportCanvas = surface.canvas;
+  if (exportCanvas && typeof exportCanvas.convertToBlob === "function") {
+    return exportCanvas.convertToBlob({ type: "image/png", colorSpace: EXPORT_COLOR_SPACE });
+  }
+  if (exportCanvas && typeof exportCanvas.toBlob === "function") {
+    return new Promise((resolve) => exportCanvas.toBlob(resolve, "image/png"));
+  }
+  return new Promise((resolve) => canvas.toBlob(resolve, "image/png"));
+}
+
 function useWasmApi() {
   const [api, setApi] = useState(null);
 
@@ -165,6 +279,8 @@ function useWasmApi() {
         getGravityMultiplier: wrap("web_get_gravity_multiplier", "number", []),
         setTimeStepMultiplier: wrap("web_set_time_step_multiplier", null, ["number"]),
         getTimeStepMultiplier: wrap("web_get_time_step_multiplier", "number", []),
+        setSymplecticIntegrator: wrap("web_set_symplectic_integrator", null, ["number"]),
+        getSymplecticIntegrator: wrap("web_get_symplectic_integrator", "number", []),
         setThreadsAmount: wrap("web_set_threads_amount", null, ["number"]),
         getThreadsAmount: wrap("web_get_threads_amount", "number", []),
         setDomainWidth: wrap("web_set_domain_width", null, ["number"]),
@@ -173,6 +289,16 @@ function useWasmApi() {
         getDomainHeight: wrap("web_get_domain_height", "number", []),
         setBlackHoleInitMass: wrap("web_set_black_hole_init_mass", null, ["number"]),
         getBlackHoleInitMass: wrap("web_get_black_hole_init_mass", "number", []),
+        setPathPredictionEnabled: wrap("web_set_path_prediction_enabled", null, ["number"]),
+        getPathPredictionEnabled: wrap("web_get_path_prediction_enabled", "number", []),
+        setPathPredictionLength: wrap("web_set_path_prediction_length", null, ["number"]),
+        getPathPredictionLength: wrap("web_get_path_prediction_length", "number", []),
+        setParticleAmountMultiplier: wrap("web_set_particle_amount_multiplier", null, ["number"]),
+        getParticleAmountMultiplier: wrap("web_get_particle_amount_multiplier", "number", []),
+        setDarkMatterAmountMultiplier: wrap("web_set_dark_matter_amount_multiplier", null, ["number"]),
+        getDarkMatterAmountMultiplier: wrap("web_get_dark_matter_amount_multiplier", "number", []),
+        setMassMultiplierEnabled: wrap("web_set_mass_multiplier_enabled", null, ["number"]),
+        getMassMultiplierEnabled: wrap("web_get_mass_multiplier_enabled", "number", []),
         setAmbientTemperature: wrap("web_set_ambient_temperature", null, ["number"]),
         getAmbientTemperature: wrap("web_get_ambient_temperature", "number", []),
         setAmbientHeatRate: wrap("web_set_ambient_heat_rate", null, ["number"]),
@@ -248,6 +374,50 @@ function useWasmApi() {
         getColorMode: wrap("web_get_color_mode", "number", []),
         setParticleSizeMultiplier: wrap("web_set_particle_size_multiplier", null, ["number"]),
         getParticleSizeMultiplier: wrap("web_get_particle_size_multiplier", "number", []),
+        getFps: wrap("web_get_fps", "number", []),
+        getFrameTime: wrap("web_get_frame_time", "number", []),
+        getParticleCount: wrap("web_get_particle_count", "number", []),
+        getSelectedParticleCount: wrap("web_get_selected_particle_count", "number", []),
+        getTotalLights: wrap("web_get_total_lights", "number", []),
+        getAccumulatedRays: wrap("web_get_accumulated_rays", "number", []),
+        setDarkMatterEnabled: wrap("web_set_dark_matter_enabled", null, ["number"]),
+        getDarkMatterEnabled: wrap("web_get_dark_matter_enabled", "number", []),
+        setLoopingSpaceEnabled: wrap("web_set_looping_space_enabled", null, ["number"]),
+        getLoopingSpaceEnabled: wrap("web_get_looping_space_enabled", "number", []),
+        setFluidGroundEnabled: wrap("web_set_fluid_ground_enabled", null, ["number"]),
+        getFluidGroundEnabled: wrap("web_get_fluid_ground_enabled", "number", []),
+        setTemperatureEnabled: wrap("web_set_temperature_enabled", null, ["number"]),
+        getTemperatureEnabled: wrap("web_get_temperature_enabled", "number", []),
+        setHighlightSelected: wrap("web_set_highlight_selected", null, ["number"]),
+        getHighlightSelected: wrap("web_get_highlight_selected", "number", []),
+        setConstraintsEnabled: wrap("web_set_constraints_enabled", null, ["number"]),
+        getConstraintsEnabled: wrap("web_get_constraints_enabled", "number", []),
+        setUnbreakableConstraints: wrap("web_set_unbreakable_constraints", null, ["number"]),
+        getUnbreakableConstraints: wrap("web_get_unbreakable_constraints", "number", []),
+        setConstraintAfterDrawing: wrap("web_set_constraint_after_drawing", null, ["number"]),
+        getConstraintAfterDrawing: wrap("web_get_constraint_after_drawing", "number", []),
+        setDrawConstraints: wrap("web_set_draw_constraints", null, ["number"]),
+        getDrawConstraints: wrap("web_get_draw_constraints", "number", []),
+        setVisualizeMesh: wrap("web_set_visualize_mesh", null, ["number"]),
+        getVisualizeMesh: wrap("web_get_visualize_mesh", "number", []),
+        setConstraintStressColor: wrap("web_set_constraint_stress_color", null, ["number"]),
+        getConstraintStressColor: wrap("web_get_constraint_stress_color", "number", []),
+        setGravityFieldEnabled: wrap("web_set_gravity_field_enabled", null, ["number"]),
+        getGravityFieldEnabled: wrap("web_get_gravity_field_enabled", "number", []),
+        setGravityFieldDmParticles: wrap("web_set_gravity_field_dm_particles", null, ["number"]),
+        getGravityFieldDmParticles: wrap("web_get_gravity_field_dm_particles", "number", []),
+        setFieldRes: wrap("web_set_field_res", null, ["number"]),
+        getFieldRes: wrap("web_get_field_res", "number", []),
+        setGravityDisplayThreshold: wrap("web_set_gravity_display_threshold", null, ["number"]),
+        getGravityDisplayThreshold: wrap("web_get_gravity_display_threshold", "number", []),
+        setGravityDisplaySoftness: wrap("web_set_gravity_display_softness", null, ["number"]),
+        getGravityDisplaySoftness: wrap("web_get_gravity_display_softness", "number", []),
+        setGravityDisplayStretch: wrap("web_set_gravity_display_stretch", null, ["number"]),
+        getGravityDisplayStretch: wrap("web_get_gravity_display_stretch", "number", []),
+        setGravityCustomColors: wrap("web_set_gravity_custom_colors", null, ["number"]),
+        getGravityCustomColors: wrap("web_get_gravity_custom_colors", "number", []),
+        setGravityExposure: wrap("web_set_gravity_exposure", null, ["number"]),
+        getGravityExposure: wrap("web_get_gravity_exposure", "number", []),
         setTheta: wrap("web_set_theta", null, ["number"]),
         getTheta: wrap("web_get_theta", "number", []),
         setSoftening: wrap("web_set_softening", null, ["number"]),
@@ -318,6 +488,11 @@ function useWasmApi() {
         setShowBrushCursor: wrap("web_set_show_brush_cursor", null, ["number"]),
         getShowBrushCursor: wrap("web_get_show_brush_cursor", "number", []),
         clearScene: wrap("web_clear_scene", null, []),
+        saveScene: wrap("web_save_scene", "number", ["string"]),
+        loadScene: wrap("web_load_scene", "number", ["string"]),
+        buildSceneJson: wrap("web_build_scene_json", "number", []),
+        getSceneJsonPtr: wrap("web_get_scene_json_ptr", "number", []),
+        loadSceneJson: wrap("web_load_scene_json", "number", ["string"]),
         setToolEraser: wrap("web_set_tool_eraser", null, ["number"]),
         getToolEraser: wrap("web_get_tool_eraser", "number", []),
         setToolRadialForce: wrap("web_set_tool_radial_force", null, ["number"]),
@@ -390,10 +565,23 @@ function Panel({ title, children, style, onHover, contentStyle = {}, collapsed =
   `;
 }
 
-function Toggle({ label, value, onChange }) {
+function Toggle({ label, value, onChange, disabled = false }) {
   return html`
-    <label style=${{ display: "flex", alignItems: "center", gap: 10, marginBottom: 10 }}>
-      <input type="checkbox" checked=${value} onChange=${(e) => onChange(e.target.checked)} />
+    <label
+      style=${{
+        display: "flex",
+        alignItems: "center",
+        gap: 10,
+        marginBottom: 10,
+        opacity: disabled ? 0.6 : 1
+      }}
+    >
+      <input
+        type="checkbox"
+        checked=${value}
+        disabled=${disabled}
+        onChange=${(e) => onChange(e.target.checked)}
+      />
       <span>${label}</span>
     </label>
   `;
@@ -433,10 +621,28 @@ function Note({ children }) {
   return html`<div style=${{ color: "#6b7785", fontSize: 12, lineHeight: 1.4, marginBottom: 10 }}>${children}</div>`;
 }
 
-function Slider({ label, value, min, max, step, onChange, tooltip }) {
+function Slider({
+  label,
+  value,
+  min,
+  max,
+  step,
+  onChange,
+  tooltip,
+  disabled = false,
+  defaultValue
+}) {
+  const initialValueRef = useRef(value);
+  const resolvedDefault = Number.isFinite(defaultValue) ? defaultValue : initialValueRef.current;
   return html`
     <label
-      style=${{ display: "flex", flexDirection: "column", gap: 6, marginBottom: 12 }}
+      style=${{
+        display: "flex",
+        flexDirection: "column",
+        gap: 6,
+        marginBottom: 12,
+        opacity: disabled ? 0.6 : 1
+      }}
       title=${tooltip || ""}
     >
       <div style=${{ display: "flex", justifyContent: "space-between" }}>
@@ -449,6 +655,13 @@ function Slider({ label, value, min, max, step, onChange, tooltip }) {
         max=${max}
         step=${step}
         value=${value}
+        disabled=${disabled}
+        onPointerDown=${(e) => {
+          if (disabled || !e.altKey || !Number.isFinite(resolvedDefault)) return;
+          e.preventDefault();
+          e.stopPropagation();
+          onChange(resolvedDefault);
+        }}
         onChange=${(e) => onChange(Number(e.target.value))}
         title=${tooltip || ""}
       />
@@ -456,10 +669,28 @@ function Slider({ label, value, min, max, step, onChange, tooltip }) {
   `;
 }
 
-function IntSlider({ label, value, min, max, step, onChange, tooltip }) {
+function IntSlider({
+  label,
+  value,
+  min,
+  max,
+  step,
+  onChange,
+  tooltip,
+  disabled = false,
+  defaultValue
+}) {
+  const initialValueRef = useRef(value);
+  const resolvedDefault = Number.isFinite(defaultValue) ? defaultValue : initialValueRef.current;
   return html`
     <label
-      style=${{ display: "flex", flexDirection: "column", gap: 6, marginBottom: 12 }}
+      style=${{
+        display: "flex",
+        flexDirection: "column",
+        gap: 6,
+        marginBottom: 12,
+        opacity: disabled ? 0.6 : 1
+      }}
       title=${tooltip || ""}
     >
       <div style=${{ display: "flex", justifyContent: "space-between" }}>
@@ -472,6 +703,13 @@ function IntSlider({ label, value, min, max, step, onChange, tooltip }) {
         max=${max}
         step=${step}
         value=${value}
+        disabled=${disabled}
+        onPointerDown=${(e) => {
+          if (disabled || !e.altKey || !Number.isFinite(resolvedDefault)) return;
+          e.preventDefault();
+          e.stopPropagation();
+          onChange(resolvedDefault);
+        }}
         onChange=${(e) => onChange(Number(e.target.value))}
         title=${tooltip || ""}
       />
@@ -479,12 +717,20 @@ function IntSlider({ label, value, min, max, step, onChange, tooltip }) {
   `;
 }
 
-function LogIntSlider({ label, value, max, onChange, tooltip }) {
+function LogIntSlider({ label, value, max, onChange, tooltip, disabled = false, defaultValue }) {
   const logMax = Math.log10(max + 1);
   const sliderValue = Math.round((Math.log10(value + 1) / logMax) * 100);
+  const initialValueRef = useRef(value);
+  const resolvedDefault = Number.isFinite(defaultValue) ? defaultValue : initialValueRef.current;
   return html`
     <label
-      style=${{ display: "flex", flexDirection: "column", gap: 6, marginBottom: 12 }}
+      style=${{
+        display: "flex",
+        flexDirection: "column",
+        gap: 6,
+        marginBottom: 12,
+        opacity: disabled ? 0.6 : 1
+      }}
       title=${tooltip || ""}
     >
       <div style=${{ display: "flex", justifyContent: "space-between" }}>
@@ -497,6 +743,13 @@ function LogIntSlider({ label, value, max, onChange, tooltip }) {
         max=${100}
         step=${1}
         value=${sliderValue}
+        disabled=${disabled}
+        onPointerDown=${(e) => {
+          if (disabled || !e.altKey || !Number.isFinite(resolvedDefault)) return;
+          e.preventDefault();
+          e.stopPropagation();
+          onChange(resolvedDefault);
+        }}
         onChange=${(e) => {
           const raw = Number(e.target.value);
           const next = Math.round(Math.pow(10, (raw / 100) * logMax) - 1);
@@ -551,9 +804,39 @@ function App() {
     : "Visuals";
   const [timePlaying, setTimePlaying] = useState(storedState.timePlaying ?? true);
   const [timeStep, setTimeStep] = useState(storedState.timeStep ?? 1.0);
+  const [symplecticIntegrator, setSymplecticIntegrator] = useState(
+    storedState.symplecticIntegrator ?? true
+  );
   const [targetFps, setTargetFps] = useState(storedState.targetFps ?? 144);
   const [gravity, setGravity] = useState(storedState.gravity ?? 1.0);
   const [particleSizeMultiplier, setParticleSizeMultiplier] = useState(storedState.particleSizeMultiplier ?? 1.0);
+  const [darkMatterEnabled, setDarkMatterEnabled] = useState(storedState.darkMatterEnabled ?? true);
+  const [loopingSpaceEnabled, setLoopingSpaceEnabled] = useState(storedState.loopingSpaceEnabled ?? true);
+  const [fluidGroundEnabled, setFluidGroundEnabled] = useState(storedState.fluidGroundEnabled ?? false);
+  const [temperatureEnabled, setTemperatureEnabled] = useState(storedState.temperatureEnabled ?? false);
+  const [highlightSelected, setHighlightSelected] = useState(storedState.highlightSelected ?? true);
+  const [constraintsEnabled, setConstraintsEnabled] = useState(storedState.constraintsEnabled ?? false);
+  const [unbreakableConstraints, setUnbreakableConstraints] = useState(storedState.unbreakableConstraints ?? false);
+  const [constraintAfterDrawing, setConstraintAfterDrawing] = useState(
+    storedState.constraintAfterDrawing ?? false
+  );
+  const [drawConstraints, setDrawConstraints] = useState(storedState.drawConstraints ?? false);
+  const [visualizeMesh, setVisualizeMesh] = useState(storedState.visualizeMesh ?? false);
+  const [constraintStressColor, setConstraintStressColor] = useState(storedState.constraintStressColor ?? false);
+  const [gravityFieldEnabled, setGravityFieldEnabled] = useState(storedState.gravityFieldEnabled ?? false);
+  const [gravityFieldDmParticles, setGravityFieldDmParticles] = useState(storedState.gravityFieldDmParticles ?? false);
+  const [fieldRes, setFieldRes] = useState(storedState.fieldRes ?? 150);
+  const [gravityDisplayThreshold, setGravityDisplayThreshold] = useState(
+    storedState.gravityDisplayThreshold ?? 1000.0
+  );
+  const [gravityDisplaySoftness, setGravityDisplaySoftness] = useState(
+    storedState.gravityDisplaySoftness ?? 0.85
+  );
+  const [gravityDisplayStretch, setGravityDisplayStretch] = useState(
+    storedState.gravityDisplayStretch ?? 90.0
+  );
+  const [gravityCustomColors, setGravityCustomColors] = useState(storedState.gravityCustomColors ?? false);
+  const [gravityExposure, setGravityExposure] = useState(storedState.gravityExposure ?? 3.0);
   const [theta, setTheta] = useState(storedState.theta ?? 0.8);
   const [softening, setSoftening] = useState(storedState.softening ?? 2.5);
   const [glowEnabled, setGlowEnabled] = useState(storedState.glowEnabled ?? false);
@@ -561,6 +844,15 @@ function App() {
   const [domainWidth, setDomainWidth] = useState(storedState.domainWidth ?? 3840);
   const [domainHeight, setDomainHeight] = useState(storedState.domainHeight ?? 2160);
   const [blackHoleInitMass, setBlackHoleInitMass] = useState(storedState.blackHoleInitMass ?? 1.0);
+  const [pathPredictionEnabled, setPathPredictionEnabled] = useState(storedState.pathPredictionEnabled ?? false);
+  const [pathPredictionLength, setPathPredictionLength] = useState(storedState.pathPredictionLength ?? 1000);
+  const [particleAmountMultiplier, setParticleAmountMultiplier] = useState(
+    storedState.particleAmountMultiplier ?? 1.0
+  );
+  const [darkMatterAmountMultiplier, setDarkMatterAmountMultiplier] = useState(
+    storedState.darkMatterAmountMultiplier ?? 1.0
+  );
+  const [massMultiplierEnabled, setMassMultiplierEnabled] = useState(storedState.massMultiplierEnabled ?? true);
   const [ambientTemperature, setAmbientTemperature] = useState(storedState.ambientTemperature ?? 274.0);
   const [ambientHeatRate, setAmbientHeatRate] = useState(storedState.ambientHeatRate ?? 1.0);
   const [heatConductivity, setHeatConductivity] = useState(storedState.heatConductivity ?? 0.045);
@@ -611,6 +903,12 @@ function App() {
     normalizeColor(storedState.wallEmissionColor ?? { r: 255, g: 255, b: 255, a: 0 })
   );
   const [lightingSamples, setLightingSamples] = useState(0);
+  const [statsFps, setStatsFps] = useState(0);
+  const [statsFrameTime, setStatsFrameTime] = useState(0);
+  const [statsParticles, setStatsParticles] = useState(0);
+  const [statsSelectedParticles, setStatsSelectedParticles] = useState(0);
+  const [statsLights, setStatsLights] = useState(0);
+  const [statsRays, setStatsRays] = useState(0);
   const [drawQuadtree, setDrawQuadtree] = useState(storedState.drawQuadtree ?? false);
   const [drawZCurves, setDrawZCurves] = useState(storedState.drawZCurves ?? false);
   const [toolDrawParticles, setToolDrawParticles] = useState(storedState.toolDrawParticles ?? false);
@@ -660,6 +958,12 @@ function App() {
     inFlight: false,
     pendingResolve: null
   });
+  const exportSurfaceRef = useRef({ canvas: null, ctx: null });
+  const initialScenes = useMemo(() => loadLocalScenesIndex(), []);
+  const [localScenes, setLocalScenes] = useState(initialScenes);
+  const [selectedSceneId, setSelectedSceneId] = useState(initialScenes[0]?.id ?? "");
+  const [sceneName, setSceneName] = useState("");
+  const [sceneStorageError, setSceneStorageError] = useState("");
   const [toolEraser, setToolEraser] = useState(storedState.toolEraser ?? false);
   const [toolRadialForce, setToolRadialForce] = useState(storedState.toolRadialForce ?? false);
   const [toolSpin, setToolSpin] = useState(storedState.toolSpin ?? false);
@@ -672,371 +976,159 @@ function App() {
   const [parametersCollapsed, setParametersCollapsed] = useState(storedState.parametersCollapsed ?? false);
   const [toolsCollapsed, setToolsCollapsed] = useState(storedState.toolsCollapsed ?? false);
   const [settingsCollapsed, setSettingsCollapsed] = useState(storedState.settingsCollapsed ?? true);
+  const [scenesCollapsed, setScenesCollapsed] = useState(storedState.scenesCollapsed ?? false);
   const [activeParamTab, setActiveParamTab] = useState(initialActiveTab);
   const [actionChoice, setActionChoice] = useState("");
   const hoverCount = useRef(0);
   const lightingProgress = maxSamples > 0 ? Math.min(lightingSamples / maxSamples, 1) : 0;
-
-  const controlsList = useMemo(
-    () => [
-      "----PARTICLES CREATION----",
-      "1. Hold MMB: Paint particles",
-      "2. Hold 1 and Drag: Create big galaxy",
-      "3. Hold 2 and Drag: Create small galaxy",
-      "4. Hold 3 and Drag: Create star",
-      "5. Press 4: Create Big Bang",
-      "6. C: Clear all particles",
-      "",
-      "----CAMERA AND SELECTION----",
-      "1. Move with RMB",
-      "2. Zoom with mouse wheel",
-      "3. LCTRL + RMB on cluster to follow it",
-      "4. LALT + RMB on particle to follow it",
-      "5. LCTRL + LMB on cluster to select it",
-      "6. LALT + LMB on particle to select it",
-      "7. LCTRL + hold and drag MMB to particle box select",
-      "8. LALT + hold and drag MMB to particle box deselect",
-      "9. Select on empty space to deselect all",
-      "10. Hold SHIFT to add to selection",
-      "11. I: Invert selection",
-      "12. Z: Center camera on selected particles",
-      "13. F: Reset camera",
-      "14. D: Deselect all particles",
-      "",
-      "----UTILITY----",
-      "1. TAB: Toggle fullscreen",
-      "2. T: Toggle global trails",
-      "3. LCTRL + T: Toggle local trails",
-      "4. U: Toggle UI",
-      "5. RMB on slider to set it to default",
-      "6. Use Actions dropdown for extra settings",
-      "7. LCTRL + Scroll wheel : Brush size",
-      "8. B: Brush attract particles",
-      "9. N: Brush spin particles",
-      "10. M: Brush grab particles",
-      "11. Hold CTRL to invert brush effects",
-      "12. R: Record",
-      "13. S: Take screenshot",
-      "14. X + MMB: Eraser",
-      "15. H: Copy selected",
-      "16. Hold J and drag: Throw copied",
-      "17. Arrows: Control selected particles",
-      "18. K: Heat brush",
-      "19. L: Cool brush",
-      "20. P: Constraint Solids"
-    ],
-    []
-  );
-
-  const infoList = useMemo(
-    () => [
-      "----INFORMATION----",
-      "",
-      "Galaxy Engine is a personal project done for learning purposes",
-      "by Narcis Calin. The project was entirely made with Raylib",
-      "and C++ and it uses external libraries, including ImGui and FFmpeg.",
-      "Galaxy Engine is Open Source and the code is available to anyone on GitHub.",
-      "Below you can find some useful information:",
-      "",
-      "1. Theta: Controls the quality of the Barnes-Hut simulation",
-      "",
-      "2. Barnes-Hut: This is the main gravity algorithm.",
-      "",
-      "3. Dark Matter: Galaxy Engine simulates dark matter with",
-      "invisible particles, which are 5 times heavier than visible ones",
-      "",
-      "4. Multi-Threading: Parallelizes the simulation across multiple",
-      "threads. The default is half the max amount of threads your CPU has,",
-      "but it is possible to modify this number.",
-      "",
-      "5. Collisions: Currently, collisions are experimental. They do not",
-      "respect conservation of energy when they are enabled with gravity.",
-      "They work as intended when gravity is disabled.",
-      "",
-      "6. Fluids Mode: This enables fluids for planetary simulation. Each",
-      "material has different parameters like stiffness, viscosity,",
-      "cohesion, and more.",
-      "",
-      "7. Frames Export Safe Mode: It is enabled by default when export",
-      "frames is enabled. It stores your frames directly to disk, avoiding",
-      "filling up your memory. Disabling it will make the render process",
-      "much faster, but the program might crash once you run out of memory",
-      "",
-      "You can report any bugs you may find on our Discord Community."
-    ],
-    []
-  );
-
-  const leftTabs = LEFT_TABS;
-
-  const setUiHover = (hovering) => {
-    if (!api) return;
-    api.setUiHover(hovering ? 1 : 0);
-  };
-
-  const updateHover = (hovering) => {
-    hoverCount.current += hovering ? 1 : -1;
-    if (hoverCount.current < 0) hoverCount.current = 0;
-    setUiHover(hoverCount.current > 0);
-  };
-
-  const colorModes = useMemo(
-    () => [
-      "Solid Color",
-      "Density Color",
-      "Force Color",
-      "Velocity Color",
-      "Shockwave Color",
-      "Turbulence Color",
-      "Pressure Color",
-      "Temperature Color",
-      "Temperature Gas Color",
-      "Material Color"
-    ],
-    []
-  );
-
-  const clearRecordingTimer = () => {
-    if (recordingTimerRef.current) {
-      clearTimeout(recordingTimerRef.current);
-      recordingTimerRef.current = null;
-    }
-  };
-
-  const finishRecording = () => {
-    setIsRecording(false);
-    if (hideBrushDuringRecording && brushCursorBeforeRecordingRef.current !== null) {
-      const previous = brushCursorBeforeRecordingRef.current;
-      brushCursorBeforeRecordingRef.current = null;
-      setShowBrushCursor(previous);
-      api?.setShowBrushCursor(previous ? 1 : 0);
-    }
-    if (pauseAfterRecording) {
-      setTimePlaying(false);
-      api?.setTimePlaying(0);
-    }
-    if (cleanSceneAfterRecording) {
-      api?.clearScene();
-    }
-  };
-
-  const applyBrushForRecording = () => {
-    if (!hideBrushDuringRecording) return;
-    if (brushCursorBeforeRecordingRef.current === null) {
-      brushCursorBeforeRecordingRef.current = showBrushCursor;
-    }
-    if (showBrushCursor) {
-      setShowBrushCursor(false);
-      api?.setShowBrushCursor(0);
-    }
-  };
-
-  const stopWebmRecording = () => {
-    clearRecordingTimer();
-    if (mediaRecorderRef.current && mediaRecorderRef.current.state !== "inactive") {
-      mediaRecorderRef.current.stop();
-    }
-  };
-
-  const startWebmRecording = () => {
+  const saveCanvasSnapshot = async () => {
     const canvas = document.getElementById("canvas");
-    if (!canvas || !window.MediaRecorder) return;
-    if (mediaRecorderRef.current && mediaRecorderRef.current.state !== "inactive") return;
-
-    applyBrushForRecording();
-
-    const fps = Math.max(1, Math.min(240, Math.round(recordingFps)));
-    const stream = canvas.captureStream(fps);
-    const preferred = [
-      "video/webm;codecs=vp9",
-      "video/webm;codecs=vp8",
-      "video/webm"
-    ];
-    const mimeType = preferred.find((type) => MediaRecorder.isTypeSupported(type)) || "";
-    const recorder = new MediaRecorder(stream, mimeType ? { mimeType } : undefined);
-
-    recordingChunksRef.current = [];
-    recorder.ondataavailable = (event) => {
-      if (event.data && event.data.size > 0) {
-        recordingChunksRef.current.push(event.data);
-      }
-    };
-    recorder.onstop = () => {
-      const blob = new Blob(recordingChunksRef.current, { type: mimeType || "video/webm" });
-      const url = URL.createObjectURL(blob);
-      const anchor = document.createElement("a");
-      const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
-      anchor.href = url;
-      anchor.download = `galaxy-engine-${timestamp}.webm`;
-      anchor.click();
-      setTimeout(() => URL.revokeObjectURL(url), 1000);
-      recordingChunksRef.current = [];
-      finishRecording();
-    };
-
-    recorder.start();
-    mediaRecorderRef.current = recorder;
-    setIsRecording(true);
-
-    if (recordingTimeLimit > 0) {
-      recordingTimerRef.current = setTimeout(() => {
-        stopWebmRecording();
-      }, recordingTimeLimit * 1000);
+    if (!canvas) return;
+    const Module = window.Module;
+    if (Module && Module.ctx && Module.ctx.finish) {
+      Module.ctx.finish();
     }
-  };
-
-  const getFrameLimit = () => {
-    if (recordingTimeLimit <= 0) return null;
-    const fps = Math.max(1, Math.min(240, Math.round(recordingFps)));
-    return Math.max(1, Math.round(recordingTimeLimit * fps));
-  };
-
-  const startFrameCapture = () => {
-    const canvas = document.getElementById("canvas");
-    if (!canvas || !canvas.toBlob) return;
-    if (frameCaptureRef.current.active) return;
-
-    applyBrushForRecording();
-
-    const capture = frameCaptureRef.current;
-    capture.active = true;
-    capture.stopping = false;
-    capture.frames = [];
-    capture.frameIndex = 0;
-    capture.maxFrames = getFrameLimit();
-    capture.inFlight = false;
-    capture.pendingResolve = null;
-    setIsRecording(true);
-
-    window.webFrameCaptureTick = () => {
-      const current = frameCaptureRef.current;
-      if (!current.active || current.stopping || current.inFlight) return;
-      current.inFlight = true;
-      canvas.toBlob(
-        (blob) => {
-          const latest = frameCaptureRef.current;
-          latest.inFlight = false;
-          if (latest.pendingResolve) {
-            const resolve = latest.pendingResolve;
-            latest.pendingResolve = null;
-            resolve();
-          }
-          if (!latest.active || latest.stopping) return;
-          if (blob) {
-            const frameNumber = String(latest.frameIndex + 1).padStart(6, "0");
-            latest.frames.push({ name: `frame_${frameNumber}.png`, blob });
-            latest.frameIndex += 1;
-          }
-          if (latest.maxFrames && latest.frameIndex >= latest.maxFrames) {
-            stopFrameCapture();
-          }
-        },
-        "image/png"
-      );
-    };
-  };
-
-  const stopFrameCapture = async () => {
-    clearRecordingTimer();
-    const capture = frameCaptureRef.current;
-    if (!capture.active || capture.stopping) return;
-    capture.active = false;
-    capture.stopping = true;
-    window.webFrameCaptureTick = null;
-    if (capture.inFlight) {
-      await new Promise((resolve) => {
-        capture.pendingResolve = resolve;
-      });
-    }
-
-    const canvas = document.getElementById("canvas");
-    const fps = Math.max(1, Math.min(240, Math.round(recordingFps)));
-    const metadata = {
-      fps,
-      width: canvas ? canvas.width : 0,
-      height: canvas ? canvas.height : 0,
-      frameCount: capture.frames.length,
-      createdAt: new Date().toISOString()
-    };
-    const metadataBlob = new Blob([JSON.stringify(metadata, null, 2)], { type: "application/json" });
-    const tar = await buildTar([{ name: "metadata.json", blob: metadataBlob }, ...capture.frames]);
-    const url = URL.createObjectURL(tar);
-    const anchor = document.createElement("a");
-    const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
-    anchor.href = url;
-    anchor.download = `galaxy-engine-frames-${timestamp}.tar`;
-    anchor.click();
+    const blob = await exportCanvasPngBlob(canvas, exportSurfaceRef.current);
+    if (!blob) return;
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = `galaxy-engine-${Date.now()}.png`;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
     setTimeout(() => URL.revokeObjectURL(url), 1000);
-
-    capture.frames = [];
-    capture.frameIndex = 0;
-    capture.maxFrames = null;
-    capture.inFlight = false;
-    capture.pendingResolve = null;
-    capture.stopping = false;
-    finishRecording();
   };
 
-  const startRecording = () => {
-    recordingModeRef.current = recordingMode;
-    if (recordingMode === "frames") {
-      startFrameCapture();
-    } else {
-      startWebmRecording();
-    }
-  };
+  const buildUiStateSnapshot = () => ({
+    timePlaying,
+    timeStep,
+    symplecticIntegrator,
+    targetFps,
+    gravity,
+    particleSizeMultiplier,
+    darkMatterEnabled,
+    loopingSpaceEnabled,
+    fluidGroundEnabled,
+    temperatureEnabled,
+    highlightSelected,
+    constraintsEnabled,
+    unbreakableConstraints,
+    constraintAfterDrawing,
+    drawConstraints,
+    visualizeMesh,
+    constraintStressColor,
+    gravityFieldEnabled,
+    gravityFieldDmParticles,
+    fieldRes,
+    gravityDisplayThreshold,
+    gravityDisplaySoftness,
+    gravityDisplayStretch,
+    gravityCustomColors,
+    gravityExposure,
+    theta,
+    softening,
+    glowEnabled,
+    threadsAmount,
+    domainWidth,
+    domainHeight,
+    blackHoleInitMass,
+    pathPredictionEnabled,
+    pathPredictionLength,
+    particleAmountMultiplier,
+    darkMatterAmountMultiplier,
+    massMultiplierEnabled,
+    ambientTemperature,
+    ambientHeatRate,
+    heatConductivity,
+    constraintStiffness,
+    constraintResistance,
+    fluidVerticalGravity,
+    fluidMassMultiplier,
+    fluidViscosity,
+    fluidStiffness,
+    fluidCohesion,
+    fluidDelta,
+    fluidMaxVelocity,
+    opticsEnabled,
+    lightGain,
+    lightSpread,
+    wallSpecularRoughness,
+    wallRefractionRoughness,
+    wallRefractionAmount,
+    wallIor,
+    wallDispersion,
+    wallEmissionGain,
+    shapeRelaxIter,
+    shapeRelaxFactor,
+    maxSamples,
+    sampleRaysAmount,
+    maxBounces,
+    diffuseEnabled,
+    specularEnabled,
+    refractionEnabled,
+    dispersionEnabled,
+    emissionEnabled,
+    symmetricalLens,
+    drawNormals,
+    relaxMove,
+    lightColor,
+    wallBaseColor,
+    wallSpecularColor,
+    wallRefractionColor,
+    wallEmissionColor,
+    drawQuadtree,
+    drawZCurves,
+    toolDrawParticles,
+    toolBlackHole,
+    toolBigGalaxy,
+    toolSmallGalaxy,
+    toolStar,
+    toolBigBang,
+    toolPointLight,
+    toolAreaLight,
+    toolConeLight,
+    toolWall,
+    toolCircle,
+    toolDrawShape,
+    toolLens,
+    toolMoveOptics,
+    toolEraseOptics,
+    toolSelectOptics,
+    trailsLength,
+    trailsThickness,
+    globalTrails,
+    selectedTrails,
+    localTrails,
+    whiteTrails,
+    colorMode,
+    pauseAfterRecording,
+    cleanSceneAfterRecording,
+    recordingTimeLimit,
+    recordingMode,
+    recordingFps,
+    showBrushCursor,
+    hideBrushDuringRecording,
+    toolEraser,
+    toolRadialForce,
+    toolSpin,
+    toolGrab,
+    showControls,
+    showInfo,
+    showTools,
+    showParameters,
+    showStats,
+    parametersCollapsed,
+    toolsCollapsed,
+    settingsCollapsed,
+    scenesCollapsed,
+    activeParamTab
+  });
 
-  const stopRecording = () => {
-    if (recordingModeRef.current === "frames") {
-      stopFrameCapture();
-    } else {
-      stopWebmRecording();
-    }
-  };
-
-  const clearToolStates = () => {
-    setToolDrawParticles(false);
-    setToolBlackHole(false);
-    setToolBigGalaxy(false);
-    setToolSmallGalaxy(false);
-    setToolStar(false);
-    setToolBigBang(false);
-    setToolEraser(false);
-    setToolRadialForce(false);
-    setToolSpin(false);
-    setToolGrab(false);
-    setToolPointLight(false);
-    setToolAreaLight(false);
-    setToolConeLight(false);
-    setToolWall(false);
-    setToolCircle(false);
-    setToolDrawShape(false);
-    setToolLens(false);
-    setToolMoveOptics(false);
-    setToolEraseOptics(false);
-    setToolSelectOptics(false);
-  };
-
-  const ensureTrailsVisible = () => {
+  const applyUiStateSnapshot = (snapshot) => {
     if (!api) return;
-    let nextLength = trailsLength;
-    let nextThickness = trailsThickness;
-    if (nextLength <= 0) {
-      nextLength = defaultTrailsLength;
-      setTrailsLength(nextLength);
-      api.setTrailsLength(nextLength);
-    }
-    if (nextThickness <= 0) {
-      nextThickness = 0.1;
-      setTrailsThickness(nextThickness);
-      api.setTrailsThickness(nextThickness);
-    }
-  };
 
-  useEffect(() => {
-    if (!api) return;
-
-    const stored = loadUiState() || {};
+    const stored = snapshot && typeof snapshot === "object" ? snapshot : {};
     const hasStored = Object.keys(stored).length > 0;
     const getBool = (key, fallback) =>
       typeof stored[key] === "boolean" ? stored[key] : fallback;
@@ -1065,6 +1157,13 @@ function App() {
     setTimeStep(timeStepValue);
     api.setTimeStepMultiplier(timeStepValue);
 
+    const symplecticIntegratorValue = getBool(
+      "symplecticIntegrator",
+      api.getSymplecticIntegrator() === 1
+    );
+    setSymplecticIntegrator(symplecticIntegratorValue);
+    api.setSymplecticIntegrator(symplecticIntegratorValue ? 1 : 0);
+
     const targetFpsValue = getNum("targetFps", api.getTargetFps());
     setTargetFps(targetFpsValue);
     api.setTargetFps(targetFpsValue);
@@ -1076,6 +1175,94 @@ function App() {
     const particleSizeValue = getNum("particleSizeMultiplier", api.getParticleSizeMultiplier());
     setParticleSizeMultiplier(particleSizeValue);
     api.setParticleSizeMultiplier(particleSizeValue);
+
+    const darkMatterEnabledValue = getBool("darkMatterEnabled", api.getDarkMatterEnabled() === 1);
+    setDarkMatterEnabled(darkMatterEnabledValue);
+    api.setDarkMatterEnabled(darkMatterEnabledValue ? 1 : 0);
+
+    const loopingSpaceEnabledValue = getBool("loopingSpaceEnabled", api.getLoopingSpaceEnabled() === 1);
+    setLoopingSpaceEnabled(loopingSpaceEnabledValue);
+    api.setLoopingSpaceEnabled(loopingSpaceEnabledValue ? 1 : 0);
+
+    const fluidGroundEnabledValue = getBool("fluidGroundEnabled", api.getFluidGroundEnabled() === 1);
+    setFluidGroundEnabled(fluidGroundEnabledValue);
+    api.setFluidGroundEnabled(fluidGroundEnabledValue ? 1 : 0);
+
+    const temperatureEnabledValue = getBool("temperatureEnabled", api.getTemperatureEnabled() === 1);
+    setTemperatureEnabled(temperatureEnabledValue);
+    api.setTemperatureEnabled(temperatureEnabledValue ? 1 : 0);
+
+    const highlightSelectedValue = getBool("highlightSelected", api.getHighlightSelected() === 1);
+    setHighlightSelected(highlightSelectedValue);
+    api.setHighlightSelected(highlightSelectedValue ? 1 : 0);
+
+    const constraintsEnabledValue = getBool("constraintsEnabled", api.getConstraintsEnabled() === 1);
+    setConstraintsEnabled(constraintsEnabledValue);
+    api.setConstraintsEnabled(constraintsEnabledValue ? 1 : 0);
+
+    const unbreakableConstraintsValue = getBool(
+      "unbreakableConstraints",
+      api.getUnbreakableConstraints() === 1
+    );
+    setUnbreakableConstraints(unbreakableConstraintsValue);
+    api.setUnbreakableConstraints(unbreakableConstraintsValue ? 1 : 0);
+
+    const constraintAfterDrawingValue = getBool(
+      "constraintAfterDrawing",
+      api.getConstraintAfterDrawing() === 1
+    );
+    setConstraintAfterDrawing(constraintAfterDrawingValue);
+    api.setConstraintAfterDrawing(constraintAfterDrawingValue ? 1 : 0);
+
+    const drawConstraintsValue = getBool("drawConstraints", api.getDrawConstraints() === 1);
+    setDrawConstraints(drawConstraintsValue);
+    api.setDrawConstraints(drawConstraintsValue ? 1 : 0);
+
+    const visualizeMeshValue = getBool("visualizeMesh", api.getVisualizeMesh() === 1);
+    setVisualizeMesh(visualizeMeshValue);
+    api.setVisualizeMesh(visualizeMeshValue ? 1 : 0);
+
+    const constraintStressColorValue = getBool(
+      "constraintStressColor",
+      api.getConstraintStressColor() === 1
+    );
+    setConstraintStressColor(constraintStressColorValue);
+    api.setConstraintStressColor(constraintStressColorValue ? 1 : 0);
+
+    const gravityFieldEnabledValue = getBool("gravityFieldEnabled", api.getGravityFieldEnabled() === 1);
+    setGravityFieldEnabled(gravityFieldEnabledValue);
+    api.setGravityFieldEnabled(gravityFieldEnabledValue ? 1 : 0);
+
+    const gravityFieldDmParticlesValue = getBool(
+      "gravityFieldDmParticles",
+      api.getGravityFieldDmParticles() === 1
+    );
+    setGravityFieldDmParticles(gravityFieldDmParticlesValue);
+    api.setGravityFieldDmParticles(gravityFieldDmParticlesValue ? 1 : 0);
+
+    const fieldResValue = getNum("fieldRes", api.getFieldRes());
+    setFieldRes(fieldResValue);
+    api.setFieldRes(fieldResValue);
+
+    const gravityDisplayThresholdValue = getNum("gravityDisplayThreshold", api.getGravityDisplayThreshold());
+    setGravityDisplayThreshold(gravityDisplayThresholdValue);
+    api.setGravityDisplayThreshold(gravityDisplayThresholdValue);
+
+    const gravityDisplaySoftnessValue = getNum("gravityDisplaySoftness", api.getGravityDisplaySoftness());
+    setGravityDisplaySoftness(gravityDisplaySoftnessValue);
+    api.setGravityDisplaySoftness(gravityDisplaySoftnessValue);
+
+    const gravityDisplayStretchValue = getNum("gravityDisplayStretch", api.getGravityDisplayStretch());
+    setGravityDisplayStretch(gravityDisplayStretchValue);
+    api.setGravityDisplayStretch(gravityDisplayStretchValue);
+
+    const gravityCustomColorsValue = getBool("gravityCustomColors", api.getGravityCustomColors() === 1);
+    setGravityCustomColors(gravityCustomColorsValue);
+    api.setGravityCustomColors(gravityCustomColorsValue ? 1 : 0);
+
+    const gravityExposureValue = getNum("gravityExposure", api.getGravityExposure());
+    setGravityExposure(gravityExposureValue);
+    api.setGravityExposure(gravityExposureValue);
 
     const thetaValue = getNum("theta", api.getTheta());
     setTheta(thetaValue);
@@ -1104,6 +1291,32 @@ function App() {
     const blackHoleInitMassValue = getNum("blackHoleInitMass", api.getBlackHoleInitMass());
     setBlackHoleInitMass(blackHoleInitMassValue);
     api.setBlackHoleInitMass(blackHoleInitMassValue);
+
+    const pathPredictionEnabledValue = getBool("pathPredictionEnabled", api.getPathPredictionEnabled() === 1);
+    setPathPredictionEnabled(pathPredictionEnabledValue);
+    api.setPathPredictionEnabled(pathPredictionEnabledValue ? 1 : 0);
+
+    const pathPredictionLengthValue = getNum("pathPredictionLength", api.getPathPredictionLength());
+    setPathPredictionLength(pathPredictionLengthValue);
+    api.setPathPredictionLength(pathPredictionLengthValue);
+
+    const particleAmountMultiplierValue = getNum(
+      "particleAmountMultiplier",
+      api.getParticleAmountMultiplier()
+    );
+    setParticleAmountMultiplier(particleAmountMultiplierValue);
+    api.setParticleAmountMultiplier(particleAmountMultiplierValue);
+
+    const darkMatterAmountMultiplierValue = getNum(
+      "darkMatterAmountMultiplier",
+      api.getDarkMatterAmountMultiplier()
+    );
+    setDarkMatterAmountMultiplier(darkMatterAmountMultiplierValue);
+    api.setDarkMatterAmountMultiplier(darkMatterAmountMultiplierValue);
+
+    const massMultiplierEnabledValue = getBool("massMultiplierEnabled", api.getMassMultiplierEnabled() === 1);
+    setMassMultiplierEnabled(massMultiplierEnabledValue);
+    api.setMassMultiplierEnabled(massMultiplierEnabledValue ? 1 : 0);
 
     const ambientTemperatureValue = getNum("ambientTemperature", api.getAmbientTemperature());
     setAmbientTemperature(ambientTemperatureValue);
@@ -1446,11 +1659,517 @@ function App() {
     const settingsCollapsedValue = getBool("settingsCollapsed", settingsCollapsed);
     setSettingsCollapsed(settingsCollapsedValue);
 
+    const scenesCollapsedValue = getBool("scenesCollapsed", scenesCollapsed);
+    setScenesCollapsed(scenesCollapsedValue);
+
     const activeTabValue = LEFT_TABS.includes(stored.activeParamTab)
       ? stored.activeParamTab
       : activeParamTab;
     setActiveParamTab(activeTabValue);
+  };
 
+  const persistLocalScenes = (nextScenes) => {
+    setLocalScenes(nextScenes);
+    saveLocalScenesIndex(nextScenes);
+  };
+
+  const saveLocalScene = () => {
+    const Module = window.Module;
+    if (!api?.buildSceneJson || !api?.getSceneJsonPtr || !Module?.HEAPU8) {
+      setSceneStorageError("Scene save is unavailable in this build.");
+      return;
+    }
+    setSceneStorageError("");
+    const now = new Date();
+    const id = `scene-${now.getTime()}`;
+    const trimmedName = sceneName.trim();
+    const name = trimmedName || `Scene ${now.toISOString().replace("T", " ").replace("Z", "")}`;
+    const size = api.buildSceneJson();
+    if (!size) {
+      setSceneStorageError("Save failed in the engine.");
+      return;
+    }
+    const ptr = api.getSceneJsonPtr();
+    if (!ptr) {
+      setSceneStorageError("Save data unavailable.");
+      return;
+    }
+    const bytes = new Uint8Array(Module.HEAPU8.subarray(ptr, ptr + size));
+    const jsonText = new TextDecoder("utf-8").decode(bytes);
+    const scenePayload = {
+      schema: LOCAL_SCENE_SCHEMA,
+      scene: jsonText,
+      uiState: buildUiStateSnapshot()
+    };
+    const storageText = JSON.stringify(scenePayload);
+    try {
+      localStorage.setItem(`${LOCAL_SCENE_PREFIX}${id}`, storageText);
+    } catch (err) {
+      console.warn("Failed to store scene in localStorage.", err);
+      setSceneStorageError("Failed to store scene in localStorage (quota?).");
+      return;
+    }
+    const storageSize = new TextEncoder().encode(storageText).length;
+    const entry = {
+      id,
+      name,
+      createdAt: now.toISOString(),
+      size: storageSize
+    };
+    const nextScenes = [entry, ...localScenes];
+    persistLocalScenes(nextScenes);
+    setSceneName("");
+    setSelectedSceneId(id);
+  };
+
+  const loadLocalScene = (id) => {
+    if (!id) return;
+    if (!api?.loadSceneJson) {
+      setSceneStorageError("Scene load is unavailable in this build.");
+      return;
+    }
+    setSceneStorageError("");
+    const rawText = localStorage.getItem(`${LOCAL_SCENE_PREFIX}${id}`);
+    if (!rawText) {
+      setSceneStorageError("Scene data not found.");
+      return;
+    }
+    let sceneText = rawText;
+    let uiState = null;
+    try {
+      const parsed = JSON.parse(rawText);
+      if (parsed && parsed.schema === LOCAL_SCENE_SCHEMA && typeof parsed.scene === "string") {
+        sceneText = parsed.scene;
+        if (parsed.uiState && typeof parsed.uiState === "object") {
+          uiState = parsed.uiState;
+        }
+      }
+    } catch (err) {
+      // Legacy saves are stored as raw scene JSON.
+    }
+    const ok = api.loadSceneJson(sceneText);
+    if (!ok) {
+      setSceneStorageError("Load failed in the engine.");
+      return;
+    }
+    if (uiState) {
+      applyUiStateSnapshot(uiState);
+    }
+  };
+
+  const deleteLocalScene = (id) => {
+    if (!id) return;
+    try {
+      localStorage.removeItem(`${LOCAL_SCENE_PREFIX}${id}`);
+    } catch (err) {
+      // Ignore storage failures.
+    }
+    const nextScenes = localScenes.filter((scene) => scene.id !== id);
+    persistLocalScenes(nextScenes);
+    if (selectedSceneId === id) {
+      setSelectedSceneId(nextScenes[0]?.id ?? "");
+    }
+  };
+
+  const loadSelectedScene = () => {
+    if (!selectedSceneId) return;
+    loadLocalScene(selectedSceneId);
+  };
+
+  const resetDefaults = () => {
+    localStorage.removeItem(STORAGE_KEY);
+    window.location.reload();
+  };
+
+  const controlsList = useMemo(
+    () => [
+      "----PARTICLES CREATION----",
+      "1. Hold MMB: Paint particles",
+      "2. Hold 1 and Drag: Create big galaxy",
+      "3. Hold 2 and Drag: Create small galaxy",
+      "4. Hold 3 and Drag: Create star",
+      "5. Press 4: Create Big Bang",
+      "6. C: Clear all particles",
+      "",
+      "----CAMERA AND SELECTION----",
+      "1. Move with RMB",
+      "2. Zoom with mouse wheel",
+      "3. LCTRL + RMB on cluster to follow it",
+      "4. LALT + RMB on particle to follow it",
+      "5. LCTRL + LMB on cluster to select it",
+      "6. LALT + LMB on particle to select it",
+      "7. LCTRL + hold and drag MMB to particle box select",
+      "8. LALT + hold and drag MMB to particle box deselect",
+      "9. Select on empty space to deselect all",
+      "10. Hold SHIFT to add to selection",
+      "11. I: Invert selection",
+      "12. Z: Center camera on selected particles",
+      "13. F: Reset camera",
+      "14. D: Deselect all particles",
+      "",
+      "----UTILITY----",
+      "1. TAB: Toggle fullscreen",
+      "2. T: Toggle global trails",
+      "3. LCTRL + T: Toggle local trails",
+      "4. U: Toggle UI",
+      "5. Option-click on slider to reset default",
+      "6. Use Actions dropdown for extra settings",
+      "7. LCTRL + Scroll wheel : Brush size",
+      "8. B: Brush attract particles",
+      "9. N: Brush spin particles",
+      "10. M: Brush grab particles",
+      "11. Hold CTRL to invert brush effects",
+      "12. R: Record",
+      "13. S: Take screenshot",
+      "14. X + MMB: Eraser",
+      "15. H: Copy selected",
+      "16. Hold J and drag: Throw copied",
+      "17. Arrows: Control selected particles",
+      "18. K: Heat brush",
+      "19. L: Cool brush",
+      "20. P: Constraint Solids"
+    ],
+    []
+  );
+
+  const infoList = useMemo(
+    () => [
+      "----INFORMATION----",
+      "",
+      "Galaxy Engine is a personal project done for learning purposes",
+      "by Narcis Calin. The project was entirely made with Raylib",
+      "and C++ and it uses external libraries, including ImGui and FFmpeg.",
+      "Galaxy Engine is Open Source and the code is available to anyone on GitHub.",
+      "Below you can find some useful information:",
+      "",
+      "1. Theta: Controls the quality of the Barnes-Hut simulation",
+      "",
+      "2. Barnes-Hut: This is the main gravity algorithm.",
+      "",
+      "3. Dark Matter: Galaxy Engine simulates dark matter with",
+      "invisible particles, which are 5 times heavier than visible ones",
+      "",
+      "4. Multi-Threading: Parallelizes the simulation across multiple",
+      "threads. The default is half the max amount of threads your CPU has,",
+      "but it is possible to modify this number.",
+      "",
+      "5. Collisions: Currently, collisions are experimental. They do not",
+      "respect conservation of energy when they are enabled with gravity.",
+      "They work as intended when gravity is disabled.",
+      "",
+      "6. Fluids Mode: This enables fluids for planetary simulation. Each",
+      "material has different parameters like stiffness, viscosity,",
+      "cohesion, and more.",
+      "",
+      "7. Frames Export Safe Mode: It is enabled by default when export",
+      "frames is enabled. It stores your frames directly to disk, avoiding",
+      "filling up your memory. Disabling it will make the render process",
+      "much faster, but the program might crash once you run out of memory",
+      "",
+      "You can report any bugs you may find on our Discord Community."
+    ],
+    []
+  );
+
+  const leftTabs = LEFT_TABS;
+
+  const setUiHover = (hovering) => {
+    if (!api) return;
+    api.setUiHover(hovering ? 1 : 0);
+  };
+
+  const updateHover = (hovering) => {
+    hoverCount.current += hovering ? 1 : -1;
+    if (hoverCount.current < 0) hoverCount.current = 0;
+    setUiHover(hoverCount.current > 0);
+  };
+
+  const colorModes = useMemo(
+    () => [
+      "Solid Color",
+      "Density Color",
+      "Force Color",
+      "Velocity Color",
+      "Shockwave Color",
+      "Turbulence Color",
+      "Pressure Color",
+      "Temperature Color",
+      "Temperature Gas Color",
+      "Material Color"
+    ],
+    []
+  );
+
+  const clearRecordingTimer = () => {
+    if (recordingTimerRef.current) {
+      clearTimeout(recordingTimerRef.current);
+      recordingTimerRef.current = null;
+    }
+  };
+
+  const finishRecording = () => {
+    setIsRecording(false);
+    if (hideBrushDuringRecording && brushCursorBeforeRecordingRef.current !== null) {
+      const previous = brushCursorBeforeRecordingRef.current;
+      brushCursorBeforeRecordingRef.current = null;
+      setShowBrushCursor(previous);
+      api?.setShowBrushCursor(previous ? 1 : 0);
+    }
+    if (pauseAfterRecording) {
+      setTimePlaying(false);
+      api?.setTimePlaying(0);
+    }
+    if (cleanSceneAfterRecording) {
+      api?.clearScene();
+    }
+  };
+
+  const applyBrushForRecording = () => {
+    if (!hideBrushDuringRecording) return;
+    if (brushCursorBeforeRecordingRef.current === null) {
+      brushCursorBeforeRecordingRef.current = showBrushCursor;
+    }
+    if (showBrushCursor) {
+      setShowBrushCursor(false);
+      api?.setShowBrushCursor(0);
+    }
+  };
+
+  const stopWebmRecording = () => {
+    clearRecordingTimer();
+    if (mediaRecorderRef.current && mediaRecorderRef.current.state !== "inactive") {
+      mediaRecorderRef.current.stop();
+    }
+  };
+
+  const startWebmRecording = () => {
+    const canvas = document.getElementById("canvas");
+    if (!canvas || !window.MediaRecorder) return;
+    if (mediaRecorderRef.current && mediaRecorderRef.current.state !== "inactive") return;
+
+    applyBrushForRecording();
+
+    const fps = Math.max(1, Math.min(240, Math.round(recordingFps)));
+    const stream = canvas.captureStream(fps);
+    const preferred = [
+      "video/webm;codecs=vp9",
+      "video/webm;codecs=vp8",
+      "video/webm"
+    ];
+    const mimeType = preferred.find((type) => MediaRecorder.isTypeSupported(type)) || "";
+    const recorder = new MediaRecorder(stream, mimeType ? { mimeType } : undefined);
+
+    recordingChunksRef.current = [];
+    recorder.ondataavailable = (event) => {
+      if (event.data && event.data.size > 0) {
+        recordingChunksRef.current.push(event.data);
+      }
+    };
+    recorder.onstop = () => {
+      const blob = new Blob(recordingChunksRef.current, { type: mimeType || "video/webm" });
+      const url = URL.createObjectURL(blob);
+      const anchor = document.createElement("a");
+      const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
+      anchor.href = url;
+      anchor.download = `galaxy-engine-${timestamp}.webm`;
+      anchor.click();
+      setTimeout(() => URL.revokeObjectURL(url), 1000);
+      recordingChunksRef.current = [];
+      finishRecording();
+    };
+
+    recorder.start();
+    mediaRecorderRef.current = recorder;
+    setIsRecording(true);
+
+    if (recordingTimeLimit > 0) {
+      recordingTimerRef.current = setTimeout(() => {
+        stopWebmRecording();
+      }, recordingTimeLimit * 1000);
+    }
+  };
+
+  const getFrameLimit = () => {
+    if (recordingTimeLimit <= 0) return null;
+    const fps = Math.max(1, Math.min(240, Math.round(recordingFps)));
+    return Math.max(1, Math.round(recordingTimeLimit * fps));
+  };
+
+  const startFrameCapture = () => {
+    const canvas = document.getElementById("canvas");
+    if (!canvas || !canvas.toBlob) return;
+    if (frameCaptureRef.current.active) return;
+
+    applyBrushForRecording();
+
+    const capture = frameCaptureRef.current;
+    capture.active = true;
+    capture.stopping = false;
+    capture.frames = [];
+    capture.frameIndex = 0;
+    capture.maxFrames = getFrameLimit();
+    capture.inFlight = false;
+    capture.pendingResolve = null;
+    setIsRecording(true);
+
+    window.webFrameCaptureTick = () => {
+      const current = frameCaptureRef.current;
+      if (!current.active || current.stopping || current.inFlight) return;
+      current.inFlight = true;
+      const finalizeCapture = (blob) => {
+        const latest = frameCaptureRef.current;
+        latest.inFlight = false;
+        if (latest.pendingResolve) {
+          const resolve = latest.pendingResolve;
+          latest.pendingResolve = null;
+          resolve();
+        }
+        if (!latest.active || latest.stopping) return;
+        if (blob) {
+          const frameNumber = String(latest.frameIndex + 1).padStart(6, "0");
+          latest.frames.push({ name: `frame_${frameNumber}.png`, blob });
+          latest.frameIndex += 1;
+        }
+        if (latest.maxFrames && latest.frameIndex >= latest.maxFrames) {
+          stopFrameCapture();
+        }
+      };
+      exportCanvasPngBlob(canvas, exportSurfaceRef.current)
+        .then((blob) => finalizeCapture(blob))
+        .catch(() => finalizeCapture(null));
+    };
+  };
+
+  const stopFrameCapture = async () => {
+    clearRecordingTimer();
+    const capture = frameCaptureRef.current;
+    if (!capture.active || capture.stopping) return;
+    capture.active = false;
+    capture.stopping = true;
+    window.webFrameCaptureTick = null;
+    if (capture.inFlight) {
+      await new Promise((resolve) => {
+        capture.pendingResolve = resolve;
+      });
+    }
+
+    const canvas = document.getElementById("canvas");
+    const fps = Math.max(1, Math.min(240, Math.round(recordingFps)));
+    const metadata = {
+      fps,
+      width: canvas ? canvas.width : 0,
+      height: canvas ? canvas.height : 0,
+      frameCount: capture.frames.length,
+      createdAt: new Date().toISOString()
+    };
+    const metadataBlob = new Blob([JSON.stringify(metadata, null, 2)], { type: "application/json" });
+    const tar = await buildTar([{ name: "metadata.json", blob: metadataBlob }, ...capture.frames]);
+    const url = URL.createObjectURL(tar);
+    const anchor = document.createElement("a");
+    const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
+    anchor.href = url;
+    anchor.download = `galaxy-engine-frames-${timestamp}.tar`;
+    anchor.click();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+
+    capture.frames = [];
+    capture.frameIndex = 0;
+    capture.maxFrames = null;
+    capture.inFlight = false;
+    capture.pendingResolve = null;
+    capture.stopping = false;
+    finishRecording();
+  };
+
+  const startRecording = () => {
+    recordingModeRef.current = recordingMode;
+    if (recordingMode === "frames") {
+      startFrameCapture();
+    } else {
+      startWebmRecording();
+    }
+  };
+
+  const stopRecording = () => {
+    if (recordingModeRef.current === "frames") {
+      stopFrameCapture();
+    } else {
+      stopWebmRecording();
+    }
+  };
+
+  const clearToolStates = () => {
+    setToolDrawParticles(false);
+    setToolBlackHole(false);
+    setToolBigGalaxy(false);
+    setToolSmallGalaxy(false);
+    setToolStar(false);
+    setToolBigBang(false);
+    setToolEraser(false);
+    setToolRadialForce(false);
+    setToolSpin(false);
+    setToolGrab(false);
+    setToolPointLight(false);
+    setToolAreaLight(false);
+    setToolConeLight(false);
+    setToolWall(false);
+    setToolCircle(false);
+    setToolDrawShape(false);
+    setToolLens(false);
+    setToolMoveOptics(false);
+    setToolEraseOptics(false);
+    setToolSelectOptics(false);
+  };
+
+  const ensureTrailsVisible = () => {
+    if (!api) return;
+    let nextLength = trailsLength;
+    let nextThickness = trailsThickness;
+    if (nextLength <= 0) {
+      nextLength = defaultTrailsLength;
+      setTrailsLength(nextLength);
+      api.setTrailsLength(nextLength);
+    }
+    if (nextThickness <= 0) {
+      nextThickness = 0.1;
+      setTrailsThickness(nextThickness);
+      api.setTrailsThickness(nextThickness);
+    }
+  };
+
+  useEffect(() => {
+    if (!api || !gravityFieldEnabled) return;
+    if (!globalTrails) {
+      setGlobalTrails(true);
+      api.setGlobalTrails(1);
+    }
+    if (selectedTrails) {
+      setSelectedTrails(false);
+      api.setSelectedTrails(0);
+    }
+    if (trailsLength <= 0) {
+      const nextLength = defaultTrailsLength;
+      setTrailsLength(nextLength);
+      api.setTrailsLength(nextLength);
+    }
+    if (trailsThickness <= 0) {
+      const nextThickness = 0.1;
+      setTrailsThickness(nextThickness);
+      api.setTrailsThickness(nextThickness);
+    }
+  }, [
+    api,
+    gravityFieldEnabled,
+    globalTrails,
+    selectedTrails,
+    trailsLength,
+    trailsThickness,
+    defaultTrailsLength
+  ]);
+
+  useEffect(() => {
+    if (!api) return;
+    applyUiStateSnapshot(loadUiState() || {});
     api.setUiHover(0);
     window.webSetWindowSize = (width, height) => {
       api.setWindowSize(width, height);
@@ -1461,110 +2180,33 @@ function App() {
   }, [api]);
 
   useEffect(() => {
-    saveUiState({
-      timePlaying,
-      timeStep,
-      targetFps,
-      gravity,
-      particleSizeMultiplier,
-      theta,
-      softening,
-      glowEnabled,
-      threadsAmount,
-      domainWidth,
-      domainHeight,
-      blackHoleInitMass,
-      ambientTemperature,
-      ambientHeatRate,
-      heatConductivity,
-      constraintStiffness,
-      constraintResistance,
-      fluidVerticalGravity,
-      fluidMassMultiplier,
-      fluidViscosity,
-      fluidStiffness,
-      fluidCohesion,
-      fluidDelta,
-      fluidMaxVelocity,
-      opticsEnabled,
-      lightGain,
-      lightSpread,
-      wallSpecularRoughness,
-      wallRefractionRoughness,
-      wallRefractionAmount,
-      wallIor,
-      wallDispersion,
-      wallEmissionGain,
-      shapeRelaxIter,
-      shapeRelaxFactor,
-      maxSamples,
-      sampleRaysAmount,
-      maxBounces,
-      diffuseEnabled,
-      specularEnabled,
-      refractionEnabled,
-      dispersionEnabled,
-      emissionEnabled,
-      symmetricalLens,
-      drawNormals,
-      relaxMove,
-      lightColor,
-      wallBaseColor,
-      wallSpecularColor,
-      wallRefractionColor,
-      wallEmissionColor,
-      drawQuadtree,
-      drawZCurves,
-      toolDrawParticles,
-      toolBlackHole,
-      toolBigGalaxy,
-      toolSmallGalaxy,
-      toolStar,
-      toolBigBang,
-      toolPointLight,
-      toolAreaLight,
-      toolConeLight,
-      toolWall,
-      toolCircle,
-      toolDrawShape,
-      toolLens,
-      toolMoveOptics,
-      toolEraseOptics,
-      toolSelectOptics,
-      trailsLength,
-      trailsThickness,
-      globalTrails,
-      selectedTrails,
-      localTrails,
-      whiteTrails,
-      colorMode,
-      pauseAfterRecording,
-      cleanSceneAfterRecording,
-      recordingTimeLimit,
-      recordingMode,
-      recordingFps,
-      showBrushCursor,
-      hideBrushDuringRecording,
-      toolEraser,
-      toolRadialForce,
-      toolSpin,
-      toolGrab,
-      showControls,
-      showInfo,
-      showTools,
-      showParameters,
-      showStats,
-      parametersCollapsed,
-      toolsCollapsed,
-      settingsCollapsed,
-    activeParamTab
-  });
+    saveUiState(buildUiStateSnapshot());
   }, [
     timePlaying,
     timeStep,
+    symplecticIntegrator,
     targetFps,
     gravity,
     particleSizeMultiplier,
+    darkMatterEnabled,
+    loopingSpaceEnabled,
+    fluidGroundEnabled,
+    temperatureEnabled,
+    highlightSelected,
+    constraintsEnabled,
+    unbreakableConstraints,
+    constraintAfterDrawing,
+    drawConstraints,
+    visualizeMesh,
+    constraintStressColor,
+    gravityFieldEnabled,
+    gravityFieldDmParticles,
+    fieldRes,
+    gravityDisplayThreshold,
+    gravityDisplaySoftness,
+    gravityDisplayStretch,
+    gravityCustomColors,
+    gravityExposure,
     theta,
     softening,
     glowEnabled,
@@ -1572,6 +2214,11 @@ function App() {
     domainWidth,
     domainHeight,
     blackHoleInitMass,
+    pathPredictionEnabled,
+    pathPredictionLength,
+    particleAmountMultiplier,
+    darkMatterAmountMultiplier,
+    massMultiplierEnabled,
     ambientTemperature,
     ambientHeatRate,
     heatConductivity,
@@ -1655,6 +2302,7 @@ function App() {
     parametersCollapsed,
     toolsCollapsed,
     settingsCollapsed,
+    scenesCollapsed,
     activeParamTab
   ]);
 
@@ -1668,6 +2316,26 @@ function App() {
   }, [api, opticsEnabled, activeParamTab]);
 
   useEffect(() => {
+    if (!api || !showStats) return undefined;
+    const updateStats = () => {
+      setStatsFps(api.getFps());
+      setStatsFrameTime(api.getFrameTime());
+      setStatsParticles(api.getParticleCount());
+      setStatsSelectedParticles(api.getSelectedParticleCount());
+      if (opticsEnabled) {
+        setStatsLights(api.getTotalLights());
+        setStatsRays(api.getAccumulatedRays());
+      } else {
+        setStatsLights(0);
+        setStatsRays(0);
+      }
+    };
+    updateStats();
+    const intervalId = setInterval(updateStats, 500);
+    return () => clearInterval(intervalId);
+  }, [api, showStats, opticsEnabled]);
+
+  useEffect(() => {
     const handlePointerMove = (event) => {
       if (!uiRoot || uiRoot.contains(event.target)) return;
       if (hoverCount.current !== 0) {
@@ -1678,6 +2346,19 @@ function App() {
     window.addEventListener("pointermove", handlePointerMove);
     return () => window.removeEventListener("pointermove", handlePointerMove);
   }, [api]);
+
+  useEffect(() => {
+    if (localScenes.length === 0) {
+      if (selectedSceneId) {
+        setSelectedSceneId("");
+      }
+      return;
+    }
+    const hasSelected = localScenes.some((scene) => scene.id === selectedSceneId);
+    if (!hasSelected) {
+      setSelectedSceneId(localScenes[0].id);
+    }
+  }, [localScenes, selectedSceneId]);
 
   useEffect(() => {
     const canvas = document.getElementById("canvas");
@@ -1800,6 +2481,7 @@ function App() {
                 <${Slider}
                   label="Particle Size"
                   value=${particleSizeMultiplier}
+                  defaultValue=${1.0}
                   min=${0.1}
                   max=${5}
                   step=${0.05}
@@ -1813,6 +2495,7 @@ function App() {
                 <${Toggle}
                   label="Global Trails"
                   value=${globalTrails}
+                  disabled=${gravityFieldEnabled}
                   onChange=${(val) => {
                     setGlobalTrails(val);
                     if (val) {
@@ -1826,6 +2509,7 @@ function App() {
                 <${Toggle}
                   label="Selected Trails"
                   value=${selectedTrails}
+                  disabled=${gravityFieldEnabled}
                   onChange=${(val) => {
                     setSelectedTrails(val);
                     if (val) {
@@ -1839,6 +2523,7 @@ function App() {
                 <${Toggle}
                   label="Local Trails"
                   value=${localTrails}
+                  disabled=${gravityFieldEnabled}
                   onChange=${(val) => {
                     setLocalTrails(val);
                     api?.setLocalTrails(val ? 1 : 0);
@@ -1847,16 +2532,21 @@ function App() {
                 <${Toggle}
                   label="White Trails"
                   value=${whiteTrails}
+                  disabled=${gravityFieldEnabled}
                   onChange=${(val) => {
                     setWhiteTrails(val);
                     api?.setWhiteTrails(val ? 1 : 0);
                   }}
                 />
+                ${gravityFieldEnabled &&
+                html`<${Note}>Trails are forced on while gravity field is enabled.</${Note}>`}
                 <${LogIntSlider}
                   label="Trails Length"
                   value=${trailsLength}
+                  defaultValue=${8}
                   max=${trailsLengthMax}
                   tooltip="Performance/clarity: longer trails are blurrier and cost more to render."
+                  disabled=${gravityFieldEnabled}
                   onChange=${(val) => {
                     setTrailsLength(val);
                     api?.setTrailsLength(val);
@@ -1865,10 +2555,12 @@ function App() {
                 <${Slider}
                   label="Trails Thickness"
                   value=${trailsThickness}
+                  defaultValue=${0.1}
                   min=${0.01}
                   max=${1.5}
                   step=${0.01}
                   tooltip="Thickness affects sharpness and fill rate; thinner is faster and cleaner."
+                  disabled=${gravityFieldEnabled}
                   onChange=${(val) => {
                     setTrailsThickness(val);
                     api?.setTrailsThickness(val);
@@ -1881,6 +2573,96 @@ function App() {
                   onChange=${(val) => {
                     setGlowEnabled(val);
                     api?.setGlowEnabled(val ? 1 : 0);
+                  }}
+                />
+                <${SectionTitle}>Field</${SectionTitle}>
+                <${Toggle}
+                  label="Gravity Field"
+                  value=${gravityFieldEnabled}
+                  onChange=${(val) => {
+                    setGravityFieldEnabled(val);
+                    api?.setGravityFieldEnabled(val ? 1 : 0);
+                  }}
+                />
+                <${Toggle}
+                  label="Include Dark Matter"
+                  value=${gravityFieldDmParticles}
+                  onChange=${(val) => {
+                    setGravityFieldDmParticles(val);
+                    api?.setGravityFieldDmParticles(val ? 1 : 0);
+                  }}
+                />
+                <${IntSlider}
+                  label="Field Resolution"
+                  value=${fieldRes}
+                  defaultValue=${150}
+                  min=${50}
+                  max=${1000}
+                  step=${1}
+                  tooltip="Controls how many cells make up the gravity field."
+                  onChange=${(val) => {
+                    setFieldRes(val);
+                    api?.setFieldRes(val);
+                  }}
+                />
+                <${Slider}
+                  label="Display Threshold"
+                  value=${gravityDisplayThreshold}
+                  defaultValue=${1000.0}
+                  min=${10}
+                  max=${3000}
+                  step=${1}
+                  tooltip="Controls how much gravity affects the field colors."
+                  onChange=${(val) => {
+                    setGravityDisplayThreshold(val);
+                    api?.setGravityDisplayThreshold(val);
+                  }}
+                />
+                <${Slider}
+                  label="Display Softness"
+                  value=${gravityDisplaySoftness}
+                  defaultValue=${0.85}
+                  min=${0.4}
+                  max=${8}
+                  step=${0.05}
+                  tooltip="Controls how soft the gravity display looks."
+                  onChange=${(val) => {
+                    setGravityDisplaySoftness(val);
+                    api?.setGravityDisplaySoftness(val);
+                  }}
+                />
+                <${Slider}
+                  label="Display Stretch"
+                  value=${gravityDisplayStretch}
+                  defaultValue=${90.0}
+                  min=${1}
+                  max=${10000}
+                  step=${1}
+                  tooltip="Controls how contrasty the gravity display looks."
+                  onChange=${(val) => {
+                    setGravityDisplayStretch(val);
+                    api?.setGravityDisplayStretch(val);
+                  }}
+                />
+                <${Toggle}
+                  label="Custom Field Colors"
+                  value=${gravityCustomColors}
+                  onChange=${(val) => {
+                    setGravityCustomColors(val);
+                    api?.setGravityCustomColors(val ? 1 : 0);
+                  }}
+                />
+                <${Slider}
+                  label="Field Exposure"
+                  value=${gravityExposure}
+                  defaultValue=${3.0}
+                  min=${0.001}
+                  max=${15}
+                  step=${0.001}
+                  tooltip="Controls the exposure of the custom color mode."
+                  onChange=${(val) => {
+                    setGravityExposure(val);
+                    api?.setGravityExposure(val);
                   }}
                 />
               `}
@@ -1908,6 +2690,7 @@ function App() {
                 <${IntSlider}
                   label="Recording FPS"
                   value=${recordingFps}
+                  defaultValue=${60}
                   min=${1}
                   max=${120}
                   step=${1}
@@ -1936,6 +2719,7 @@ function App() {
                 <${Slider}
                   label="Recording Time Limit (s)"
                   value=${recordingTimeLimit}
+                  defaultValue=${0}
                   min=${0}
                   max=${60}
                   step=${0.5}
@@ -1953,26 +2737,7 @@ function App() {
                     setHideBrushDuringRecording(val);
                   }}
                 />
-                <${Button}
-                  label=${isRecording
-                    ? recordingMode === "frames"
-                      ? "Capturing Frames..."
-                      : "Recording..."
-                    : recordingMode === "frames"
-                      ? "Start Frame Capture (PNG sequence)"
-                      : `Start Recording (WebM @ ${Math.round(recordingFps)}fps)`}
-                  onClick=${() => {
-                    if (!isRecording) startRecording();
-                  }}
-                  disabled=${isRecording}
-                />
-                <${Button}
-                  label=${recordingMode === "frames" ? "Stop Capture" : "Stop Recording"}
-                  onClick=${() => {
-                    if (isRecording) stopRecording();
-                  }}
-                  disabled=${!isRecording}
-                />
+                <${Note}>Recording controls are now in the bottom-center toolbar.</${Note}>
                 <${Note}>
                   ${recordingMode === "frames"
                     ? "Frame capture downloads a .tar with PNGs and metadata.json. Encode with ffmpeg at your chosen FPS."
@@ -1990,6 +2755,35 @@ function App() {
                     api?.setOpticsEnabled(val ? 1 : 0);
                   }}
                 />
+                <${SectionTitle}>Accumulation</${SectionTitle}>
+                <div style=${{ display: "flex", justifyContent: "space-between", marginBottom: 8 }}>
+                  <span>Samples</span>
+                  <span style=${{ color: "#9aa4b2" }}>${Math.max(0, lightingSamples)} / ${maxSamples}</span>
+                </div>
+                <div
+                  style=${{
+                    height: 6,
+                    borderRadius: 999,
+                    background: "rgba(255,255,255,0.08)",
+                    overflow: "hidden",
+                    marginBottom: 10
+                  }}
+                >
+                  <div
+                    style=${{
+                      height: "100%",
+                      width: `${(lightingProgress * 100).toFixed(1)}%`,
+                      background: "rgba(159,178,255,0.6)"
+                    }}
+                  />
+                </div>
+                <${Button}
+                  label="Reset Accumulation"
+                  onClick=${() => {
+                    api?.resetLightingSamples();
+                    setLightingSamples(0);
+                  }}
+                />
                 <${SectionTitle}>Light</${SectionTitle}>
                 <${ColorPicker}
                   label="Light Color"
@@ -2003,6 +2797,7 @@ function App() {
                 <${Slider}
                   label="Light Gain"
                   value=${lightGain}
+                  defaultValue=${0.25}
                   min=${0}
                   max=${1}
                   step=${0.01}
@@ -2015,6 +2810,7 @@ function App() {
                 <${Slider}
                   label="Light Spread"
                   value=${lightSpread}
+                  defaultValue=${0.85}
                   min=${0}
                   max=${1}
                   step=${0.01}
@@ -2065,6 +2861,7 @@ function App() {
                 <${Slider}
                   label="Wall Specular Roughness"
                   value=${wallSpecularRoughness}
+                  defaultValue=${0.5}
                   min=${0}
                   max=${1}
                   step=${0.01}
@@ -2077,6 +2874,7 @@ function App() {
                 <${Slider}
                   label="Wall Refraction Roughness"
                   value=${wallRefractionRoughness}
+                  defaultValue=${0.0}
                   min=${0}
                   max=${1}
                   step=${0.01}
@@ -2089,6 +2887,7 @@ function App() {
                 <${Slider}
                   label="Wall Refraction Amount"
                   value=${wallRefractionAmount}
+                  defaultValue=${0.0}
                   min=${0}
                   max=${1}
                   step=${0.01}
@@ -2101,6 +2900,7 @@ function App() {
                 <${Slider}
                   label="Wall IOR"
                   value=${wallIor}
+                  defaultValue=${1.5}
                   min=${0}
                   max=${100}
                   step=${0.1}
@@ -2113,6 +2913,7 @@ function App() {
                 <${Slider}
                   label="Wall Dispersion"
                   value=${wallDispersion}
+                  defaultValue=${0.0}
                   min=${0}
                   max=${0.2}
                   step=${0.001}
@@ -2125,6 +2926,7 @@ function App() {
                 <${Slider}
                   label="Wall Emission Gain"
                   value=${wallEmissionGain}
+                  defaultValue=${0.0}
                   min=${0}
                   max=${1}
                   step=${0.01}
@@ -2138,6 +2940,7 @@ function App() {
                 <${IntSlider}
                   label="Shape Relax Iter."
                   value=${shapeRelaxIter}
+                  defaultValue=${15}
                   min=${0}
                   max=${50}
                   step=${1}
@@ -2150,6 +2953,7 @@ function App() {
                 <${Slider}
                   label="Shape Relax Factor"
                   value=${shapeRelaxFactor}
+                  defaultValue=${0.65}
                   min=${0}
                   max=${1}
                   step=${0.01}
@@ -2163,6 +2967,7 @@ function App() {
                 <${LogIntSlider}
                   label="Max Samples"
                   value=${maxSamples}
+                  defaultValue=${500}
                   max=${2048}
                   tooltip="Controls the total amount of lighting iterations."
                   onChange=${(val) => {
@@ -2173,6 +2978,7 @@ function App() {
                 <${LogIntSlider}
                   label="Rays Per Sample"
                   value=${sampleRaysAmount}
+                  defaultValue=${1024}
                   max=${8192}
                   tooltip="Controls amount of rays emitted on each sample."
                   onChange=${(val) => {
@@ -2183,6 +2989,7 @@ function App() {
                 <${IntSlider}
                   label="Max Bounces"
                   value=${maxBounces}
+                  defaultValue=${3}
                   min=${0}
                   max=${16}
                   step=${1}
@@ -2190,35 +2997,6 @@ function App() {
                   onChange=${(val) => {
                     setMaxBounces(val);
                     api?.setMaxBounces(val);
-                  }}
-                />
-                <${SectionTitle}>Accumulation</${SectionTitle}>
-                <div style=${{ display: "flex", justifyContent: "space-between", marginBottom: 8 }}>
-                  <span>Samples</span>
-                  <span style=${{ color: "#9aa4b2" }}>${Math.max(0, lightingSamples)} / ${maxSamples}</span>
-                </div>
-                <div
-                  style=${{
-                    height: 6,
-                    borderRadius: 999,
-                    background: "rgba(255,255,255,0.08)",
-                    overflow: "hidden",
-                    marginBottom: 10
-                  }}
-                >
-                  <div
-                    style=${{
-                      height: "100%",
-                      width: `${(lightingProgress * 100).toFixed(1)}%`,
-                      background: "rgba(159,178,255,0.6)"
-                    }}
-                  />
-                </div>
-                <${Button}
-                  label="Reset Accumulation"
-                  onClick=${() => {
-                    api?.resetLightingSamples();
-                    setLightingSamples(0);
                   }}
                 />
                 <${SectionTitle}>Ray Features</${SectionTitle}>
@@ -2294,6 +3072,7 @@ function App() {
                 <${IntSlider}
                   label="Threads Amount"
                   value=${threadsAmount}
+                  defaultValue=${1}
                   min=${1}
                   max=${32}
                   step=${1}
@@ -2307,6 +3086,7 @@ function App() {
                 <${Slider}
                   label="Theta"
                   value=${theta}
+                  defaultValue=${0.8}
                   min=${0.1}
                   max=${5}
                   step=${0.05}
@@ -2319,6 +3099,7 @@ function App() {
                 <${IntSlider}
                   label="Domain Width"
                   value=${domainWidth}
+                  defaultValue=${3840}
                   min=${200}
                   max=${3840}
                   step=${10}
@@ -2331,6 +3112,7 @@ function App() {
                 <${IntSlider}
                   label="Domain Height"
                   value=${domainHeight}
+                  defaultValue=${2160}
                   min=${200}
                   max=${2160}
                   step=${10}
@@ -2344,6 +3126,7 @@ function App() {
                 <${Slider}
                   label="Time Scale"
                   value=${timeStep}
+                  defaultValue=${1.0}
                   min=${0}
                   max=${15}
                   step=${0.05}
@@ -2353,9 +3136,19 @@ function App() {
                     api?.setTimeStepMultiplier(val);
                   }}
                 />
+                <${Toggle}
+                  label="Symplectic Integrator"
+                  value=${symplecticIntegrator}
+                  onChange=${(val) => {
+                    setSymplecticIntegrator(val);
+                    api?.setSymplecticIntegrator(val ? 1 : 0);
+                  }}
+                />
+                <${Note}>Energy-preserving integration. Disable for legacy behavior.</${Note}>
                 <${Slider}
                   label="Softening"
                   value=${softening}
+                  defaultValue=${2.5}
                   min=${0.5}
                   max=${30}
                   step=${0.1}
@@ -2368,6 +3161,7 @@ function App() {
                 <${Slider}
                   label="Gravity Strength"
                   value=${gravity}
+                  defaultValue=${1.0}
                   min=${0}
                   max=${100}
                   step=${0.1}
@@ -2380,6 +3174,7 @@ function App() {
                 <${Slider}
                   label="Black Hole Init Mass"
                   value=${blackHoleInitMass}
+                  defaultValue=${1.0}
                   min=${0.005}
                   max=${15}
                   step=${0.005}
@@ -2389,10 +3184,52 @@ function App() {
                     api?.setBlackHoleInitMass(val);
                   }}
                 />
+                <${SectionTitle}>Simulation Toggles</${SectionTitle}>
+                <${Toggle}
+                  label="Dark Matter"
+                  value=${darkMatterEnabled}
+                  onChange=${(val) => {
+                    setDarkMatterEnabled(val);
+                    api?.setDarkMatterEnabled(val ? 1 : 0);
+                  }}
+                />
+                <${Toggle}
+                  label="Looping Space"
+                  value=${loopingSpaceEnabled}
+                  onChange=${(val) => {
+                    setLoopingSpaceEnabled(val);
+                    api?.setLoopingSpaceEnabled(val ? 1 : 0);
+                  }}
+                />
+                <${Toggle}
+                  label="Fluid Ground Mode"
+                  value=${fluidGroundEnabled}
+                  onChange=${(val) => {
+                    setFluidGroundEnabled(val);
+                    api?.setFluidGroundEnabled(val ? 1 : 0);
+                  }}
+                />
+                <${Toggle}
+                  label="Temperature Simulation"
+                  value=${temperatureEnabled}
+                  onChange=${(val) => {
+                    setTemperatureEnabled(val);
+                    api?.setTemperatureEnabled(val ? 1 : 0);
+                  }}
+                />
+                <${Toggle}
+                  label="Highlight Selected"
+                  value=${highlightSelected}
+                  onChange=${(val) => {
+                    setHighlightSelected(val);
+                    api?.setHighlightSelected(val ? 1 : 0);
+                  }}
+                />
                 <${SectionTitle}>Temperature</${SectionTitle}>
                 <${IntSlider}
                   label="Ambient Temperature"
                   value=${ambientTemperature}
+                  defaultValue=${274.0}
                   min=${1}
                   max=${2500}
                   step=${1}
@@ -2405,6 +3242,7 @@ function App() {
                 <${Slider}
                   label="Ambient Heat Rate"
                   value=${ambientHeatRate}
+                  defaultValue=${1.0}
                   min=${0}
                   max=${10}
                   step=${0.05}
@@ -2417,6 +3255,7 @@ function App() {
                 <${Slider}
                   label="Heat Conductivity Multiplier"
                   value=${heatConductivity}
+                  defaultValue=${0.045}
                   min=${0.001}
                   max=${1}
                   step=${0.001}
@@ -2430,6 +3269,7 @@ function App() {
                 <${Slider}
                   label="Constraints Stiffness Multiplier"
                   value=${constraintStiffness}
+                  defaultValue=${1.0}
                   min=${0.001}
                   max=${3}
                   step=${0.001}
@@ -2442,6 +3282,7 @@ function App() {
                 <${Slider}
                   label="Constraints Resistance Multiplier"
                   value=${constraintResistance}
+                  defaultValue=${1.0}
                   min=${0.001}
                   max=${30}
                   step=${0.01}
@@ -2451,10 +3292,76 @@ function App() {
                     api?.setConstraintResistance(val);
                   }}
                 />
+                <${SectionTitle}>Constraints & Mesh</${SectionTitle}>
+                <${Toggle}
+                  label="Enable Constraints"
+                  value=${constraintsEnabled}
+                  onChange=${(val) => {
+                    setConstraintsEnabled(val);
+                    api?.setConstraintsEnabled(val ? 1 : 0);
+                  }}
+                />
+                <${Toggle}
+                  label="Unbreakable Constraints"
+                  value=${unbreakableConstraints}
+                  disabled=${!constraintsEnabled}
+                  onChange=${(val) => {
+                    setUnbreakableConstraints(val);
+                    api?.setUnbreakableConstraints(val ? 1 : 0);
+                  }}
+                />
+                <${Toggle}
+                  label="Constraint After Drawing"
+                  value=${constraintAfterDrawing}
+                  disabled=${!constraintsEnabled}
+                  onChange=${(val) => {
+                    setConstraintAfterDrawing(val);
+                    api?.setConstraintAfterDrawing(val ? 1 : 0);
+                  }}
+                />
+                <${Toggle}
+                  label="Visualize Constraints"
+                  value=${drawConstraints}
+                  disabled=${!constraintsEnabled}
+                  onChange=${(val) => {
+                    setDrawConstraints(val);
+                    if (val) {
+                      setVisualizeMesh(false);
+                    }
+                    api?.setDrawConstraints(val ? 1 : 0);
+                    if (val) {
+                      api?.setVisualizeMesh(0);
+                    }
+                  }}
+                />
+                <${Toggle}
+                  label="Visualize Mesh"
+                  value=${visualizeMesh}
+                  onChange=${(val) => {
+                    setVisualizeMesh(val);
+                    if (val) {
+                      setDrawConstraints(false);
+                    }
+                    api?.setVisualizeMesh(val ? 1 : 0);
+                    if (val) {
+                      api?.setDrawConstraints(0);
+                    }
+                  }}
+                />
+                <${Toggle}
+                  label="Constraint Stress Color"
+                  value=${constraintStressColor}
+                  disabled=${!drawConstraints}
+                  onChange=${(val) => {
+                    setConstraintStressColor(val);
+                    api?.setConstraintStressColor(val ? 1 : 0);
+                  }}
+                />
                 <${SectionTitle}>Fluids</${SectionTitle}>
                 <${Slider}
                   label="Fluid Vertical Gravity"
                   value=${fluidVerticalGravity}
+                  defaultValue=${3.0}
                   min=${0}
                   max=${10}
                   step=${0.1}
@@ -2467,6 +3374,7 @@ function App() {
                 <${Slider}
                   label="Fluid Mass Multiplier"
                   value=${fluidMassMultiplier}
+                  defaultValue=${0.03}
                   min=${0.005}
                   max=${0.15}
                   step=${0.001}
@@ -2479,6 +3387,7 @@ function App() {
                 <${Slider}
                   label="Fluid Viscosity"
                   value=${fluidViscosity}
+                  defaultValue=${0.1}
                   min=${0.01}
                   max=${15}
                   step=${0.01}
@@ -2491,6 +3400,7 @@ function App() {
                 <${Slider}
                   label="Fluid Stiffness"
                   value=${fluidStiffness}
+                  defaultValue=${1.0}
                   min=${0.01}
                   max=${15}
                   step=${0.01}
@@ -2503,6 +3413,7 @@ function App() {
                 <${Slider}
                   label="Fluid Cohesion"
                   value=${fluidCohesion}
+                  defaultValue=${1.0}
                   min=${0}
                   max=${10}
                   step=${0.01}
@@ -2515,6 +3426,7 @@ function App() {
                 <${Slider}
                   label="Fluid Delta"
                   value=${fluidDelta}
+                  defaultValue=${9500.0}
                   min=${500}
                   max=${20000}
                   step=${50}
@@ -2527,6 +3439,7 @@ function App() {
                 <${Slider}
                   label="Fluid Max Velocity"
                   value=${fluidMaxVelocity}
+                  defaultValue=${250.0}
                   min=${0}
                   max=${2000}
                   step=${10}
@@ -2534,6 +3447,62 @@ function App() {
                   onChange=${(val) => {
                     setFluidMaxVelocity(val);
                     api?.setFluidMaxVelocity(val);
+                  }}
+                />
+                <${SectionTitle}>Spawning & Prediction</${SectionTitle}>
+                <${Toggle}
+                  label="Predict Path"
+                  value=${pathPredictionEnabled}
+                  onChange=${(val) => {
+                    setPathPredictionEnabled(val);
+                    api?.setPathPredictionEnabled(val ? 1 : 0);
+                  }}
+                />
+                <${IntSlider}
+                  label="Path Prediction Length"
+                  value=${pathPredictionLength}
+                  defaultValue=${1000}
+                  min=${100}
+                  max=${2000}
+                  step=${1}
+                  tooltip="Controls how long the predicted path is."
+                  onChange=${(val) => {
+                    setPathPredictionLength(val);
+                    api?.setPathPredictionLength(val);
+                  }}
+                />
+                <${Slider}
+                  label="Visible Particle Multiplier"
+                  value=${particleAmountMultiplier}
+                  defaultValue=${1.0}
+                  min=${0.1}
+                  max=${100}
+                  step=${0.1}
+                  tooltip="Controls the spawn amount of visible particles."
+                  onChange=${(val) => {
+                    setParticleAmountMultiplier(val);
+                    api?.setParticleAmountMultiplier(val);
+                  }}
+                />
+                <${Slider}
+                  label="Dark Matter Multiplier"
+                  value=${darkMatterAmountMultiplier}
+                  defaultValue=${1.0}
+                  min=${0.1}
+                  max=${100}
+                  step=${0.1}
+                  tooltip="Controls the spawn amount of dark matter particles."
+                  onChange=${(val) => {
+                    setDarkMatterAmountMultiplier(val);
+                    api?.setDarkMatterAmountMultiplier(val);
+                  }}
+                />
+                <${Toggle}
+                  label="Mass Multiplier"
+                  value=${massMultiplierEnabled}
+                  onChange=${(val) => {
+                    setMassMultiplierEnabled(val);
+                    api?.setMassMultiplierEnabled(val ? 1 : 0);
                   }}
                 />
               `}
@@ -2558,440 +3527,559 @@ function App() {
             border: "none",
             padding: 12,
             height: "100%",
+            minHeight: 0,
             boxSizing: "border-box"
           }}
         >
-          ${showTools &&
-          html`
+          <div
+            style=${{
+              display: "flex",
+              flexDirection: "column",
+              gap: 16,
+              height: "100%",
+              minHeight: 0,
+              overflowY: "auto",
+              overflowX: "hidden",
+              pointerEvents: "auto",
+              paddingRight: 6,
+              boxSizing: "border-box"
+            }}
+          >
+            ${showTools &&
+            html`
+              <${Panel}
+                title="CURRENT TOOL"
+                onHover=${updateHover}
+                collapsed=${toolsCollapsed}
+                onToggle=${() => setToolsCollapsed(!toolsCollapsed)}
+                style=${{
+                  pointerEvents: "auto",
+                  display: "flex",
+                  flexDirection: "column",
+                  minHeight: 0
+                }}
+                contentStyle=${{
+                  overflow: "auto",
+                  minHeight: 0,
+                  paddingRight: 6
+                }}
+              >
+                <${SectionTitle}>Particle</${SectionTitle}>
+                <${Toggle}
+                  label="Draw Particles"
+                  value=${toolDrawParticles}
+                  onChange=${(val) => {
+                    setToolDrawParticles(val);
+                    if (val) {
+                      clearToolStates();
+                      setToolDrawParticles(true);
+                      api?.setToolDrawParticles(1);
+                    } else {
+                      api?.setToolDrawParticles(0);
+                    }
+                  }}
+                />
+                <${Toggle}
+                  label="Black Hole"
+                  value=${toolBlackHole}
+                  onChange=${(val) => {
+                    setToolBlackHole(val);
+                    if (val) {
+                      clearToolStates();
+                      setToolBlackHole(true);
+                      api?.setToolBlackHole(1);
+                    } else {
+                      api?.setToolBlackHole(0);
+                    }
+                  }}
+                />
+                <${Toggle}
+                  label="Big Galaxy"
+                  value=${toolBigGalaxy}
+                  onChange=${(val) => {
+                    setToolBigGalaxy(val);
+                    if (val) {
+                      clearToolStates();
+                      setToolBigGalaxy(true);
+                      api?.setToolBigGalaxy(1);
+                    } else {
+                      api?.setToolBigGalaxy(0);
+                    }
+                  }}
+                />
+                <${Toggle}
+                  label="Small Galaxy"
+                  value=${toolSmallGalaxy}
+                  onChange=${(val) => {
+                    setToolSmallGalaxy(val);
+                    if (val) {
+                      clearToolStates();
+                      setToolSmallGalaxy(true);
+                      api?.setToolSmallGalaxy(1);
+                    } else {
+                      api?.setToolSmallGalaxy(0);
+                    }
+                  }}
+                />
+                <${Toggle}
+                  label="Star"
+                  value=${toolStar}
+                  onChange=${(val) => {
+                    setToolStar(val);
+                    if (val) {
+                      clearToolStates();
+                      setToolStar(true);
+                      api?.setToolStar(1);
+                    } else {
+                      api?.setToolStar(0);
+                    }
+                  }}
+                />
+                <${Toggle}
+                  label="Big Bang"
+                  value=${toolBigBang}
+                  onChange=${(val) => {
+                    setToolBigBang(val);
+                    if (val) {
+                      clearToolStates();
+                      setToolBigBang(true);
+                      api?.setToolBigBang(1);
+                    } else {
+                      api?.setToolBigBang(0);
+                    }
+                  }}
+                />
+                <${SectionTitle}>Brush</${SectionTitle}>
+                <${Toggle}
+                  label="Eraser"
+                  value=${toolEraser}
+                  onChange=${(val) => {
+                    setToolEraser(val);
+                    if (val) {
+                      clearToolStates();
+                      setToolEraser(true);
+                      api?.setToolEraser(1);
+                    } else {
+                      api?.setToolEraser(0);
+                    }
+                  }}
+                />
+                <${Toggle}
+                  label="Radial Force"
+                  value=${toolRadialForce}
+                  onChange=${(val) => {
+                    setToolRadialForce(val);
+                    if (val) {
+                      clearToolStates();
+                      setToolRadialForce(true);
+                      api?.setToolRadialForce(1);
+                    } else {
+                      api?.setToolRadialForce(0);
+                    }
+                  }}
+                />
+                <${Toggle}
+                  label="Spin"
+                  value=${toolSpin}
+                  onChange=${(val) => {
+                    setToolSpin(val);
+                    if (val) {
+                      clearToolStates();
+                      setToolSpin(true);
+                      api?.setToolSpin(1);
+                    } else {
+                      api?.setToolSpin(0);
+                    }
+                  }}
+                />
+                <${Toggle}
+                  label="Grab"
+                  value=${toolGrab}
+                  onChange=${(val) => {
+                    setToolGrab(val);
+                    if (val) {
+                      clearToolStates();
+                      setToolGrab(true);
+                      api?.setToolGrab(1);
+                    } else {
+                      api?.setToolGrab(0);
+                    }
+                  }}
+                />
+                <${SectionTitle}>Optics</${SectionTitle}>
+                <${Toggle}
+                  label="Point Light"
+                  value=${toolPointLight}
+                  onChange=${(val) => {
+                    setToolPointLight(val);
+                    if (val) {
+                      clearToolStates();
+                      setToolPointLight(true);
+                      api?.setToolPointLight(1);
+                    } else {
+                      api?.setToolPointLight(0);
+                    }
+                  }}
+                />
+                <${Toggle}
+                  label="Area Light"
+                  value=${toolAreaLight}
+                  onChange=${(val) => {
+                    setToolAreaLight(val);
+                    if (val) {
+                      clearToolStates();
+                      setToolAreaLight(true);
+                      api?.setToolAreaLight(1);
+                    } else {
+                      api?.setToolAreaLight(0);
+                    }
+                  }}
+                />
+                <${Toggle}
+                  label="Cone Light"
+                  value=${toolConeLight}
+                  onChange=${(val) => {
+                    setToolConeLight(val);
+                    if (val) {
+                      clearToolStates();
+                      setToolConeLight(true);
+                      api?.setToolConeLight(1);
+                    } else {
+                      api?.setToolConeLight(0);
+                    }
+                  }}
+                />
+                <${Toggle}
+                  label="Wall"
+                  value=${toolWall}
+                  onChange=${(val) => {
+                    setToolWall(val);
+                    if (val) {
+                      clearToolStates();
+                      setToolWall(true);
+                      api?.setToolWall(1);
+                    } else {
+                      api?.setToolWall(0);
+                    }
+                  }}
+                />
+                <${Toggle}
+                  label="Circle"
+                  value=${toolCircle}
+                  onChange=${(val) => {
+                    setToolCircle(val);
+                    if (val) {
+                      clearToolStates();
+                      setToolCircle(true);
+                      api?.setToolCircle(1);
+                    } else {
+                      api?.setToolCircle(0);
+                    }
+                  }}
+                />
+                <${Toggle}
+                  label="Draw Shape"
+                  value=${toolDrawShape}
+                  onChange=${(val) => {
+                    setToolDrawShape(val);
+                    if (val) {
+                      clearToolStates();
+                      setToolDrawShape(true);
+                      api?.setToolDrawShape(1);
+                    } else {
+                      api?.setToolDrawShape(0);
+                    }
+                  }}
+                />
+                <${Toggle}
+                  label="Lens"
+                  value=${toolLens}
+                  onChange=${(val) => {
+                    setToolLens(val);
+                    if (val) {
+                      clearToolStates();
+                      setToolLens(true);
+                      api?.setToolLens(1);
+                    } else {
+                      api?.setToolLens(0);
+                    }
+                  }}
+                />
+                <${Toggle}
+                  label="Move Optics"
+                  value=${toolMoveOptics}
+                  onChange=${(val) => {
+                    setToolMoveOptics(val);
+                    if (val) {
+                      clearToolStates();
+                      setToolMoveOptics(true);
+                      api?.setToolMoveOptics(1);
+                    } else {
+                      api?.setToolMoveOptics(0);
+                    }
+                  }}
+                />
+                <${Toggle}
+                  label="Erase Optics"
+                  value=${toolEraseOptics}
+                  onChange=${(val) => {
+                    setToolEraseOptics(val);
+                    if (val) {
+                      clearToolStates();
+                      setToolEraseOptics(true);
+                      api?.setToolEraseOptics(1);
+                    } else {
+                      api?.setToolEraseOptics(0);
+                    }
+                  }}
+                />
+                <${Toggle}
+                  label="Select Optics"
+                  value=${toolSelectOptics}
+                  onChange=${(val) => {
+                    setToolSelectOptics(val);
+                    if (val) {
+                      clearToolStates();
+                      setToolSelectOptics(true);
+                      api?.setToolSelectOptics(1);
+                    } else {
+                      api?.setToolSelectOptics(0);
+                    }
+                  }}
+                />
+              </${Panel}>
+            `}
+            <${Panel} title="ACTIONS" onHover=${updateHover} style=${{ pointerEvents: "auto" }}>
+              <label style=${{ display: "flex", flexDirection: "column", gap: 6 }}>
+                <span>Quick Action</span>
+                <select
+                  value=${actionChoice}
+                  onChange=${(e) => {
+                    const next = e.target.value;
+                    if (!next) return;
+                    const action = actionOptions.find((option) => option.value === next);
+                    action?.onSelect();
+                    setActionChoice("");
+                  }}
+                  style=${{
+                    background: "rgba(255,255,255,0.06)",
+                    border: "1px solid rgba(255,255,255,0.12)",
+                    borderRadius: 8,
+                    padding: "6px 8px",
+                    color: "#e6edf3"
+                  }}
+                >
+                  <option value="">Select an action…</option>
+                  ${actionOptions.map(
+                    (option) => html`<option key=${option.value} value=${option.value}>${option.label}</option>`
+                  )}
+                </select>
+              </label>
+              <${Note}>Runs immediately and closes after selection.</${Note}>
+            </${Panel}>
             <${Panel}
-              title="CURRENT TOOL"
+              title="SCENES"
               onHover=${updateHover}
-              collapsed=${toolsCollapsed}
-              onToggle=${() => setToolsCollapsed(!toolsCollapsed)}
-              style=${{
-                pointerEvents: "auto",
-                display: "flex",
-                flexDirection: "column",
-                minHeight: 0
-              }}
-              contentStyle=${{
-                overflow: "auto",
-                minHeight: 0,
-                paddingRight: 6
-              }}
+              collapsed=${scenesCollapsed}
+              onToggle=${() => setScenesCollapsed(!scenesCollapsed)}
+              style=${{ pointerEvents: "auto" }}
             >
-              <${SectionTitle}>Particle</${SectionTitle}>
-              <${Toggle}
-                label="Draw Particles"
-                value=${toolDrawParticles}
-                onChange=${(val) => {
-                  setToolDrawParticles(val);
-                  if (val) {
-                    clearToolStates();
-                    setToolDrawParticles(true);
-                    api?.setToolDrawParticles(1);
-                  } else {
-                    api?.setToolDrawParticles(0);
-                  }
+              <label style=${{ display: "flex", flexDirection: "column", gap: 6, marginBottom: 10 }}>
+                <span>Scene Name</span>
+                <input
+                  type="text"
+                  value=${sceneName}
+                  placeholder="Optional name"
+                  onChange=${(e) => setSceneName(e.target.value)}
+                  style=${{
+                    background: "rgba(255,255,255,0.06)",
+                    border: "1px solid rgba(255,255,255,0.12)",
+                    borderRadius: 8,
+                    padding: "6px 8px",
+                    color: "#e6edf3"
+                  }}
+                />
+              </label>
+              <${Button}
+                label="Save Scene to Browser"
+                onClick=${() => {
+                  if (timePlaying) return;
+                  saveLocalScene();
                 }}
+                disabled=${timePlaying}
               />
-              <${Toggle}
-                label="Black Hole"
-                value=${toolBlackHole}
-                onChange=${(val) => {
-                  setToolBlackHole(val);
-                  if (val) {
-                    clearToolStates();
-                    setToolBlackHole(true);
-                    api?.setToolBlackHole(1);
-                  } else {
-                    api?.setToolBlackHole(0);
+              <label style=${{ display: "flex", flexDirection: "column", gap: 6, marginBottom: 10 }}>
+                <span>Saved Scenes</span>
+                <select
+                  value=${selectedSceneId}
+                  onChange=${(e) => setSelectedSceneId(e.target.value)}
+                  style=${{
+                    background: "rgba(255,255,255,0.06)",
+                    border: "1px solid rgba(255,255,255,0.12)",
+                    borderRadius: 8,
+                    padding: "6px 8px",
+                    color: "#e6edf3"
+                  }}
+                >
+                  <option value="">No saved scenes</option>
+                  ${localScenes.map(
+                    (scene) =>
+                      html`<option key=${scene.id} value=${scene.id}>
+                        ${scene.name || scene.id} (${formatBytes(scene.size)})
+                      </option>`
+                  )}
+                </select>
+              </label>
+              <${Button}
+                label="Load Selected Scene"
+                onClick=${() => {
+                  if (timePlaying) {
+                    setTimePlaying(false);
+                    api?.setTimePlaying(0);
                   }
+                  loadSelectedScene();
                 }}
+                disabled=${!selectedSceneId}
               />
-              <${Toggle}
-                label="Big Galaxy"
-                value=${toolBigGalaxy}
-                onChange=${(val) => {
-                  setToolBigGalaxy(val);
-                  if (val) {
-                    clearToolStates();
-                    setToolBigGalaxy(true);
-                    api?.setToolBigGalaxy(1);
-                  } else {
-                    api?.setToolBigGalaxy(0);
-                  }
+              <${Button}
+                label="Delete Selected Scene"
+                onClick=${() => {
+                  deleteLocalScene(selectedSceneId);
                 }}
+                disabled=${!selectedSceneId}
               />
-              <${Toggle}
-                label="Small Galaxy"
-                value=${toolSmallGalaxy}
+              ${sceneStorageError &&
+              html`<${Note}>${sceneStorageError}</${Note}>`}
+              <${Note}>Saves optics objects (walls/shapes/lights) only; particles are not stored.</${Note}>
+              <${Note}>Stored in browser localStorage and limited by browser storage quotas.</${Note}>
+            </${Panel}>
+            <${Panel}
+              title="SETTINGS"
+              onHover=${updateHover}
+              collapsed=${settingsCollapsed}
+              onToggle=${() => setSettingsCollapsed(!settingsCollapsed)}
+              style=${{ pointerEvents: "auto", maxHeight: "60vh", overflow: "auto" }}
+            >
+              <${SectionTitle}>Panels</${SectionTitle}>
+              <${Toggle} label="Show Controls" value=${showControls} onChange=${setShowControls} />
+              <${Toggle} label="Show Information" value=${showInfo} onChange=${setShowInfo} />
+              <${Toggle} label="Show Tools" value=${showTools} onChange=${setShowTools} />
+              <${Toggle} label="Show Parameters" value=${showParameters} onChange=${setShowParameters} />
+              <${Toggle} label="Show Stats" value=${showStats} onChange=${setShowStats} />
+
+              <${SectionTitle}>Simulation</${SectionTitle}>
+              <${Slider}
+                label="Time Step"
+                value=${timeStep}
+                defaultValue=${1.0}
+                min=${0}
+                max=${15}
+                step=${0.05}
+                tooltip="Controls how fast time passes."
                 onChange=${(val) => {
-                  setToolSmallGalaxy(val);
-                  if (val) {
-                    clearToolStates();
-                    setToolSmallGalaxy(true);
-                    api?.setToolSmallGalaxy(1);
-                  } else {
-                    api?.setToolSmallGalaxy(0);
-                  }
-                }}
-              />
-              <${Toggle}
-                label="Star"
-                value=${toolStar}
-                onChange=${(val) => {
-                  setToolStar(val);
-                  if (val) {
-                    clearToolStates();
-                    setToolStar(true);
-                    api?.setToolStar(1);
-                  } else {
-                    api?.setToolStar(0);
-                  }
-                }}
-              />
-              <${Toggle}
-                label="Big Bang"
-                value=${toolBigBang}
-                onChange=${(val) => {
-                  setToolBigBang(val);
-                  if (val) {
-                    clearToolStates();
-                    setToolBigBang(true);
-                    api?.setToolBigBang(1);
-                  } else {
-                    api?.setToolBigBang(0);
-                  }
+                  setTimeStep(val);
+                  api?.setTimeStepMultiplier(val);
                 }}
               />
               <${SectionTitle}>Brush</${SectionTitle}>
               <${Toggle}
-                label="Eraser"
-                value=${toolEraser}
+                label="Show Brush Cursor"
+                value=${showBrushCursor}
                 onChange=${(val) => {
-                  setToolEraser(val);
-                  if (val) {
-                    clearToolStates();
-                    setToolEraser(true);
-                    api?.setToolEraser(1);
-                  } else {
-                    api?.setToolEraser(0);
-                  }
+                  setShowBrushCursor(val);
+                  api?.setShowBrushCursor(val ? 1 : 0);
                 }}
               />
-              <${Toggle}
-                label="Radial Force"
-                value=${toolRadialForce}
+              <${SectionTitle}>Physics</${SectionTitle}>
+              <${Slider}
+                label="Gravity Multiplier"
+                value=${gravity}
+                defaultValue=${1.0}
+                min=${0}
+                max=${100}
+                step=${0.1}
+                tooltip="Controls how much particles attract eachother."
                 onChange=${(val) => {
-                  setToolRadialForce(val);
-                  if (val) {
-                    clearToolStates();
-                    setToolRadialForce(true);
-                    api?.setToolRadialForce(1);
-                  } else {
-                    api?.setToolRadialForce(0);
-                  }
+                  setGravity(val);
+                  api?.setGravityMultiplier(val);
                 }}
               />
-              <${Toggle}
-                label="Spin"
-                value=${toolSpin}
-                onChange=${(val) => {
-                  setToolSpin(val);
-                  if (val) {
-                    clearToolStates();
-                    setToolSpin(true);
-                    api?.setToolSpin(1);
-                  } else {
-                    api?.setToolSpin(0);
-                  }
-                }}
-              />
-              <${Toggle}
-                label="Grab"
-                value=${toolGrab}
-                onChange=${(val) => {
-                  setToolGrab(val);
-                  if (val) {
-                    clearToolStates();
-                    setToolGrab(true);
-                    api?.setToolGrab(1);
-                  } else {
-                    api?.setToolGrab(0);
-                  }
-                }}
-              />
-              <${SectionTitle}>Optics</${SectionTitle}>
-              <${Toggle}
-                label="Point Light"
-                value=${toolPointLight}
-                onChange=${(val) => {
-                  setToolPointLight(val);
-                  if (val) {
-                    clearToolStates();
-                    setToolPointLight(true);
-                    api?.setToolPointLight(1);
-                  } else {
-                    api?.setToolPointLight(0);
-                  }
-                }}
-              />
-              <${Toggle}
-                label="Area Light"
-                value=${toolAreaLight}
-                onChange=${(val) => {
-                  setToolAreaLight(val);
-                  if (val) {
-                    clearToolStates();
-                    setToolAreaLight(true);
-                    api?.setToolAreaLight(1);
-                  } else {
-                    api?.setToolAreaLight(0);
-                  }
-                }}
-              />
-              <${Toggle}
-                label="Cone Light"
-                value=${toolConeLight}
-                onChange=${(val) => {
-                  setToolConeLight(val);
-                  if (val) {
-                    clearToolStates();
-                    setToolConeLight(true);
-                    api?.setToolConeLight(1);
-                  } else {
-                    api?.setToolConeLight(0);
-                  }
-                }}
-              />
-              <${Toggle}
-                label="Wall"
-                value=${toolWall}
-                onChange=${(val) => {
-                  setToolWall(val);
-                  if (val) {
-                    clearToolStates();
-                    setToolWall(true);
-                    api?.setToolWall(1);
-                  } else {
-                    api?.setToolWall(0);
-                  }
-                }}
-              />
-              <${Toggle}
-                label="Circle"
-                value=${toolCircle}
-                onChange=${(val) => {
-                  setToolCircle(val);
-                  if (val) {
-                    clearToolStates();
-                    setToolCircle(true);
-                    api?.setToolCircle(1);
-                  } else {
-                    api?.setToolCircle(0);
-                  }
-                }}
-              />
-              <${Toggle}
-                label="Draw Shape"
-                value=${toolDrawShape}
-                onChange=${(val) => {
-                  setToolDrawShape(val);
-                  if (val) {
-                    clearToolStates();
-                    setToolDrawShape(true);
-                    api?.setToolDrawShape(1);
-                  } else {
-                    api?.setToolDrawShape(0);
-                  }
-                }}
-              />
-              <${Toggle}
-                label="Lens"
-                value=${toolLens}
-                onChange=${(val) => {
-                  setToolLens(val);
-                  if (val) {
-                    clearToolStates();
-                    setToolLens(true);
-                    api?.setToolLens(1);
-                  } else {
-                    api?.setToolLens(0);
-                  }
-                }}
-              />
-              <${Toggle}
-                label="Move Optics"
-                value=${toolMoveOptics}
-                onChange=${(val) => {
-                  setToolMoveOptics(val);
-                  if (val) {
-                    clearToolStates();
-                    setToolMoveOptics(true);
-                    api?.setToolMoveOptics(1);
-                  } else {
-                    api?.setToolMoveOptics(0);
-                  }
-                }}
-              />
-              <${Toggle}
-                label="Erase Optics"
-                value=${toolEraseOptics}
-                onChange=${(val) => {
-                  setToolEraseOptics(val);
-                  if (val) {
-                    clearToolStates();
-                    setToolEraseOptics(true);
-                    api?.setToolEraseOptics(1);
-                  } else {
-                    api?.setToolEraseOptics(0);
-                  }
-                }}
-              />
-              <${Toggle}
-                label="Select Optics"
-                value=${toolSelectOptics}
-                onChange=${(val) => {
-                  setToolSelectOptics(val);
-                  if (val) {
-                    clearToolStates();
-                    setToolSelectOptics(true);
-                    api?.setToolSelectOptics(1);
-                  } else {
-                    api?.setToolSelectOptics(0);
-                  }
-                }}
-              />
-            </${Panel}>
-          `}
-          <${Panel} title="ACTIONS" onHover=${updateHover} style=${{ pointerEvents: "auto" }}>
-            <label style=${{ display: "flex", flexDirection: "column", gap: 6 }}>
-              <span>Quick Action</span>
-              <select
-                value=${actionChoice}
-                onChange=${(e) => {
-                  const next = e.target.value;
-                  if (!next) return;
-                  const action = actionOptions.find((option) => option.value === next);
-                  action?.onSelect();
-                  setActionChoice("");
-                }}
-                style=${{
-                  background: "rgba(255,255,255,0.06)",
-                  border: "1px solid rgba(255,255,255,0.12)",
-                  borderRadius: 8,
-                  padding: "6px 8px",
-                  color: "#e6edf3"
-                }}
-              >
-                <option value="">Select an action…</option>
-                ${actionOptions.map(
-                  (option) => html`<option key=${option.value} value=${option.value}>${option.label}</option>`
-                )}
-              </select>
-            </label>
-            <${Note}>Runs immediately and closes after selection.</${Note}>
-          </${Panel}>
-          <${Panel}
-            title="SETTINGS"
-            onHover=${updateHover}
-            collapsed=${settingsCollapsed}
-            onToggle=${() => setSettingsCollapsed(!settingsCollapsed)}
-            style=${{ pointerEvents: "auto", maxHeight: "60vh", overflow: "auto" }}
-          >
-            <${SectionTitle}>Panels</${SectionTitle}>
-            <${Toggle} label="Show Controls" value=${showControls} onChange=${setShowControls} />
-            <${Toggle} label="Show Information" value=${showInfo} onChange=${setShowInfo} />
-            <${Toggle} label="Show Tools" value=${showTools} onChange=${setShowTools} />
-            <${Toggle} label="Show Parameters" value=${showParameters} onChange=${setShowParameters} />
-            <${Toggle} label="Show Stats" value=${showStats} onChange=${setShowStats} />
-
-            <${SectionTitle}>Simulation</${SectionTitle}>
-            <${Slider}
-              label="Time Step"
-              value=${timeStep}
-              min=${0}
-              max=${15}
-              step=${0.05}
-              tooltip="Controls how fast time passes."
-              onChange=${(val) => {
-                setTimeStep(val);
-                api?.setTimeStepMultiplier(val);
-              }}
-            />
-            <${SectionTitle}>Brush</${SectionTitle}>
-            <${Toggle}
-              label="Show Brush Cursor"
-              value=${showBrushCursor}
-              onChange=${(val) => {
-                setShowBrushCursor(val);
-                api?.setShowBrushCursor(val ? 1 : 0);
-              }}
-            />
-            <${SectionTitle}>Physics</${SectionTitle}>
-            <${Slider}
-              label="Gravity Multiplier"
-              value=${gravity}
-              min=${0}
-              max=${100}
-              step=${0.1}
-              tooltip="Controls how much particles attract eachother."
-              onChange=${(val) => {
-                setGravity(val);
-                api?.setGravityMultiplier(val);
-              }}
-            />
-            <${SectionTitle}>Performance</${SectionTitle}>
-            <label style=${{ display: "flex", flexDirection: "column", gap: 6, marginBottom: 12 }}>
-              <span>Target FPS</span>
-              <input
-                type="number"
-                min=${1}
-                max=${240}
-                value=${targetFps}
-                onChange=${(e) => {
-                  const next = Number(e.target.value || 0);
-                  setTargetFps(next);
-                  api?.setTargetFps(next);
-                }}
-                title="Caps render FPS; lowering can reduce CPU/GPU load."
-              />
-            </label>
-            <${SectionTitle}>Debug</${SectionTitle}>
-            <${Toggle}
-              label="Draw Quadtree"
-              value=${drawQuadtree}
-              onChange=${(val) => {
-                setDrawQuadtree(val);
-                api?.setDrawQuadtree(val ? 1 : 0);
-              }}
-            />
-            <${Toggle}
-              label="Draw Z-Curves"
-              value=${drawZCurves}
-              onChange=${(val) => {
-                setDrawZCurves(val);
-                api?.setDrawZCurves(val ? 1 : 0);
-              }}
-            />
-            <${Note}>More settings are available in the native UI and will be wired here next.</${Note}>
-          </${Panel}>
-
-          ${showStats &&
-          html`
-            <${Panel} title="STATS" onHover=${updateHover} style=${{ pointerEvents: "auto" }}>
-              <div style=${{ display: "flex", justifyContent: "space-between", marginBottom: 6 }}>
+              <${SectionTitle}>Performance</${SectionTitle}>
+              <label style=${{ display: "flex", flexDirection: "column", gap: 6, marginBottom: 12 }}>
                 <span>Target FPS</span>
-                <span>${targetFps}</span>
-              </div>
-              <div style=${{ display: "flex", justifyContent: "space-between", marginBottom: 6 }}>
-                <span>Gravity Multiplier</span>
-                <span>${gravity.toFixed(2)}</span>
-              </div>
-              <${Note}>Native stats (FPS, particles, lights) are not exposed yet.</${Note}>
+                <input
+                  type="number"
+                  min=${1}
+                  max=${240}
+                  value=${targetFps}
+                  onChange=${(e) => {
+                    const next = Number(e.target.value || 0);
+                    setTargetFps(next);
+                    api?.setTargetFps(next);
+                  }}
+                  title="Caps render FPS; lowering can reduce CPU/GPU load."
+                />
+              </label>
+              <${SectionTitle}>Debug</${SectionTitle}>
+              <${Toggle}
+                label="Draw Quadtree"
+                value=${drawQuadtree}
+                onChange=${(val) => {
+                  setDrawQuadtree(val);
+                  api?.setDrawQuadtree(val ? 1 : 0);
+                }}
+              />
+              <${Toggle}
+                label="Draw Z-Curves"
+                value=${drawZCurves}
+                onChange=${(val) => {
+                  setDrawZCurves(val);
+                  api?.setDrawZCurves(val ? 1 : 0);
+                }}
+              />
+              <${Note}>More settings are available in the native UI and will be wired here next.</${Note}>
+              <${SectionTitle}>Reset</${SectionTitle}>
+              <${Button} label="Reset Defaults (Reload)" onClick=${resetDefaults} />
+              <${Note}>Clears saved UI settings and reloads the app.</${Note}>
             </${Panel}>
-          `}
+
+            ${showStats &&
+            html`
+              <${Panel} title="STATS" onHover=${updateHover} style=${{ pointerEvents: "auto" }}>
+                <div style=${{ display: "flex", justifyContent: "space-between", marginBottom: 6 }}>
+                  <span>FPS</span>
+                  <span>${statsFps}</span>
+                </div>
+                <div style=${{ display: "flex", justifyContent: "space-between", marginBottom: 6 }}>
+                  <span>Frame Time</span>
+                  <span>${(statsFrameTime * 1000).toFixed(1)} ms</span>
+                </div>
+                <div style=${{ display: "flex", justifyContent: "space-between", marginBottom: 6 }}>
+                  <span>Total Particles</span>
+                  <span>${statsParticles}</span>
+                </div>
+                <div style=${{ display: "flex", justifyContent: "space-between", marginBottom: 6 }}>
+                  <span>Selected Particles</span>
+                  <span>${statsSelectedParticles}</span>
+                </div>
+                ${opticsEnabled &&
+                html`
+                  <div style=${{ display: "flex", justifyContent: "space-between", marginBottom: 6 }}>
+                    <span>Lights</span>
+                    <span>${statsLights}</span>
+                  </div>
+                  <div style=${{ display: "flex", justifyContent: "space-between", marginBottom: 6 }}>
+                    <span>Accumulated Rays</span>
+                    <span>${statsRays}</span>
+                  </div>
+                  <div style=${{ display: "flex", justifyContent: "space-between", marginBottom: 6 }}>
+                    <span>Lighting Samples</span>
+                    <span>${lightingSamples}/${maxSamples}</span>
+                  </div>
+                `}
+              </${Panel}>
+            `}
+          </div>
         </div>
       </div>
 
@@ -3040,9 +4128,146 @@ function App() {
           bottom: 28,
           transform: "translateX(-50%)",
           zIndex: 3,
-          pointerEvents: "auto"
+          pointerEvents: "auto",
+          display: "flex",
+          alignItems: "center",
+          gap: 12,
+          flexWrap: "wrap",
+          justifyContent: "center"
         }}
       >
+        <button
+          onClick=${() => {
+            api?.clearScene();
+          }}
+          style=${{
+            display: "flex",
+            alignItems: "center",
+            gap: 8,
+            padding: "10px 16px",
+            borderRadius: 999,
+            border: "1px solid rgba(255,255,255,0.16)",
+            background: "rgba(255,120,120,0.18)",
+            color: "#e6edf3",
+            letterSpacing: "0.08em",
+            textTransform: "uppercase",
+            fontSize: 12,
+            cursor: "pointer",
+            boxShadow: "0 16px 30px rgba(0,0,0,0.35)"
+          }}
+        >
+          Clear
+        </button>
+        <button
+          onClick=${() => {
+            if (timePlaying) return;
+            saveLocalScene();
+          }}
+          disabled=${timePlaying}
+          style=${{
+            display: "flex",
+            alignItems: "center",
+            gap: 8,
+            padding: "10px 16px",
+            borderRadius: 999,
+            border: "1px solid rgba(255,255,255,0.16)",
+            background: timePlaying ? "rgba(255,255,255,0.05)" : "rgba(74,222,128,0.18)",
+            color: "#e6edf3",
+            letterSpacing: "0.08em",
+            textTransform: "uppercase",
+            fontSize: 12,
+            cursor: timePlaying ? "not-allowed" : "pointer",
+            opacity: timePlaying ? 0.5 : 1,
+            boxShadow: "0 16px 30px rgba(0,0,0,0.35)"
+          }}
+        >
+          Save Scene
+        </button>
+        <button
+          onClick=${() => {
+            if (timePlaying) {
+              setTimePlaying(false);
+              api?.setTimePlaying(0);
+            }
+            loadSelectedScene();
+          }}
+          disabled=${!selectedSceneId}
+          style=${{
+            display: "flex",
+            alignItems: "center",
+            gap: 8,
+            padding: "10px 16px",
+            borderRadius: 999,
+            border: "1px solid rgba(255,255,255,0.16)",
+            background: !selectedSceneId ? "rgba(255,255,255,0.05)" : "rgba(251,191,36,0.2)",
+            color: "#e6edf3",
+            letterSpacing: "0.08em",
+            textTransform: "uppercase",
+            fontSize: 12,
+            cursor: !selectedSceneId ? "not-allowed" : "pointer",
+            opacity: !selectedSceneId ? 0.5 : 1,
+            boxShadow: "0 16px 30px rgba(0,0,0,0.35)"
+          }}
+        >
+          Load Scene
+        </button>
+        <button
+          onClick=${() => {
+            if (isRecording) {
+              stopRecording();
+            } else {
+              startRecording();
+            }
+          }}
+          style=${{
+            display: "flex",
+            alignItems: "center",
+            gap: 8,
+            padding: "10px 16px",
+            borderRadius: 999,
+            border: "1px solid rgba(255,255,255,0.16)",
+            background: isRecording ? "rgba(248,113,113,0.25)" : "rgba(255,255,255,0.08)",
+            color: "#e6edf3",
+            letterSpacing: "0.08em",
+            textTransform: "uppercase",
+            fontSize: 12,
+            cursor: "pointer",
+            boxShadow: "0 16px 30px rgba(0,0,0,0.35)"
+          }}
+        >
+          ${isRecording
+            ? recordingMode === "frames"
+              ? "Stop Capture"
+              : "Stop Recording"
+            : recordingMode === "frames"
+              ? "Capture Frames"
+              : "Record"}
+        </button>
+        <button
+          onClick=${() => {
+            if (timePlaying) return;
+            saveCanvasSnapshot();
+          }}
+          disabled=${timePlaying}
+          style=${{
+            display: "flex",
+            alignItems: "center",
+            gap: 8,
+            padding: "10px 16px",
+            borderRadius: 999,
+            border: "1px solid rgba(255,255,255,0.16)",
+            background: timePlaying ? "rgba(255,255,255,0.05)" : "rgba(34,211,238,0.18)",
+            color: "#e6edf3",
+            letterSpacing: "0.08em",
+            textTransform: "uppercase",
+            fontSize: 12,
+            cursor: timePlaying ? "not-allowed" : "pointer",
+            opacity: timePlaying ? 0.5 : 1,
+            boxShadow: "0 16px 30px rgba(0,0,0,0.35)"
+          }}
+        >
+          PNG
+        </button>
         <button
           onClick=${() => {
             const next = !timePlaying;

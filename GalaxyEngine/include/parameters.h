@@ -82,6 +82,7 @@ struct UpdateVariables{
 	float softening = 2.5f;
 	float theta = 0.8f;
 	float timeStepMultiplier = 1.0f;
+	bool useSymplecticIntegrator = true;
 	float sphMaxVel = 250.0f;
 	float globalHeatConductivity = 0.045f;
 	float globalAmbientHeatRate = 1.0f;

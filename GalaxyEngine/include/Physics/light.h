@@ -166,6 +166,14 @@ struct Shape {
 		return nullptr;
 	}
 
+	const Wall* getWallById(const std::vector<Wall>& walls, uint32_t id) const {
+		for (const Wall& wall : walls) {
+			if (wall.id == id)
+				return &wall;
+		}
+		return nullptr;
+	}
+
 	float getSignedArea(const std::vector<glm::vec2>& vertices) {
 		float area = 0.0f;
 		int n = vertices.size();
@@ -1360,6 +1368,7 @@ struct Lighting {
 	bool symmetricalLens = false;
 
 	bool shouldRender = true;
+	bool accumulationResetRequested = false;
 
 	bool drawNormals = false;
 
@@ -1640,6 +1649,7 @@ struct Lighting {
 			currentSamples = 0;
 
 			accumulatedRays = 0;
+			accumulationResetRequested = true;
 			shouldRender = false;
 		}
 

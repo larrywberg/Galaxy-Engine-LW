@@ -135,6 +135,7 @@
       const loading = document.getElementById("loading");
       const loadingStatus = document.getElementById("loading-status");
       const loadingFill = document.querySelector(".loading-bar-fill");
+      const preferredColorSpace = "srgb";
 
       let totalDependencies = 0;
       function setLoadingVisible(visible) {
@@ -152,6 +153,25 @@
       function setLoadingStatus(message) {
         if (message) {
           loadingStatus.textContent = message;
+        }
+      }
+
+      function applyWebglColorSpace() {
+        const gl = window.Module && window.Module.ctx;
+        if (!gl) return;
+        try {
+          if ("drawingBufferColorSpace" in gl) {
+            gl.drawingBufferColorSpace = preferredColorSpace;
+          }
+        } catch (err) {
+          // Ignore unsupported color space assignments.
+        }
+        try {
+          if ("unpackColorSpace" in gl) {
+            gl.unpackColorSpace = preferredColorSpace;
+          }
+        } catch (err) {
+          // Ignore unsupported color space assignments.
         }
       }
 
@@ -194,6 +214,13 @@
 
       window.Module = {
         canvas,
+        webglContextAttributes: {
+          alpha: false,
+          premultipliedAlpha: false,
+          antialias: true,
+          powerPreference: "high-performance",
+          colorSpace: preferredColorSpace
+        },
         setStatus(text) {
           setLoadingVisible(true);
           if (typeof text !== "string") return;
@@ -220,6 +247,7 @@
           setLoadingProgress(1, 1);
           setLoadingStatus("Ready.");
           setTimeout(() => setLoadingVisible(false), 300);
+          applyWebglColorSpace();
           if (window.webUiInit) {
             window.webUiInit();
           }

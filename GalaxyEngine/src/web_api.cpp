@@ -2,12 +2,22 @@
 #include "parameters.h"
 
 #include <cstdint>
+#include <filesystem>
+#include <fstream>
+#include <sstream>
+#include <string>
+#include <vector>
+
+#include <yaml-cpp/yaml.h>
 #include <emscripten/emscripten.h>
 
 extern UpdateVariables myVar;
 extern UpdateParameters myParam;
 extern SPH sph;
+extern Physics physics;
+extern SaveSystem save;
 extern Lighting lighting;
+extern Field field;
 
 static Color unpackColor(uint32_t rgba) {
 	Color color;
@@ -23,6 +33,73 @@ static uint32_t packColor(const Color& color) {
 		| (static_cast<uint32_t>(color.g) << 8)
 		| (static_cast<uint32_t>(color.b) << 16)
 		| (static_cast<uint32_t>(color.a) << 24);
+}
+
+static std::vector<uint8_t> g_sceneBuffer;
+static std::string g_sceneJson;
+
+static void appendVec2(std::ostringstream& out, const glm::vec2& value) {
+	out << "[" << value.x << "," << value.y << "]";
+}
+
+static void appendColor(std::ostringstream& out, const Color& value) {
+	out << "[" << static_cast<int>(value.r) << "," << static_cast<int>(value.g) << ","
+		<< static_cast<int>(value.b) << "," << static_cast<int>(value.a) << "]";
+}
+
+static glm::vec2 readVec2(const YAML::Node& node) {
+	if (!node || !node.IsSequence() || node.size() < 2) {
+		return { 0.0f, 0.0f };
+	}
+	return { node[0].as<float>(), node[1].as<float>() };
+}
+
+static Color readColor(const YAML::Node& node, Color fallback) {
+	Color result = fallback;
+	if (!node || !node.IsSequence() || node.size() < 4) {
+		return result;
+	}
+	auto clampChannel = [](int value) {
+		if (value < 0) return 0;
+		if (value > 255) return 255;
+		return value;
+	};
+	result.r = static_cast<unsigned char>(clampChannel(node[0].as<int>()));
+	result.g = static_cast<unsigned char>(clampChannel(node[1].as<int>()));
+	result.b = static_cast<unsigned char>(clampChannel(node[2].as<int>()));
+	result.a = static_cast<unsigned char>(clampChannel(node[3].as<int>()));
+	return result;
+}
+
+static std::vector<glm::vec2> readVec2List(const YAML::Node& node) {
+	std::vector<glm::vec2> values;
+	if (!node || !node.IsSequence()) {
+		return values;
+	}
+	values.reserve(node.size());
+	for (const auto& entry : node) {
+		values.push_back(readVec2(entry));
+	}
+	return values;
+}
+
+static std::vector<uint32_t> readUintList(const YAML::Node& node) {
+	std::vector<uint32_t> values;
+	if (!node || !node.IsSequence()) {
+		return values;
+	}
+	values.reserve(node.size());
+	for (const auto& entry : node) {
+		values.push_back(entry.as<uint32_t>());
+	}
+	return values;
+}
+
+static std::string ensureSceneDir() {
+	const std::string dir = "/scenes";
+	std::error_code ec;
+	std::filesystem::create_directory(dir, ec);
+	return dir;
 }
 
 extern "C" {
@@ -69,6 +146,14 @@ EMSCRIPTEN_KEEPALIVE void web_set_time_step_multiplier(float mult) {
 
 EMSCRIPTEN_KEEPALIVE float web_get_time_step_multiplier() {
 	return myVar.timeStepMultiplier;
+}
+
+EMSCRIPTEN_KEEPALIVE void web_set_symplectic_integrator(int enabled) {
+	myVar.useSymplecticIntegrator = (enabled != 0);
+}
+
+EMSCRIPTEN_KEEPALIVE int web_get_symplectic_integrator() {
+	return myVar.useSymplecticIntegrator ? 1 : 0;
 }
 
 EMSCRIPTEN_KEEPALIVE void web_set_window_size(int width, int height) {
@@ -122,6 +207,572 @@ EMSCRIPTEN_KEEPALIVE void web_clear_scene() {
 	myParam.pParticlesSelected.clear();
 	myParam.rParticlesSelected.clear();
 	myParam.trails.segments.clear();
+
+	lighting.rays.clear();
+	lighting.pointLights.clear();
+	lighting.areaLights.clear();
+	lighting.coneLights.clear();
+	lighting.walls.clear();
+	lighting.shapes.clear();
+	lighting.wallPointers.clear();
+	lighting.bvh.build(lighting.wallPointers);
+	lighting.currentSamples = 0;
+	lighting.accumulatedRays = 0;
+	lighting.totalLights = 0;
+	lighting.shouldRender = true;
+}
+
+EMSCRIPTEN_KEEPALIVE int web_save_scene(const char* path) {
+	save.saveFlag = false;
+	save.loadFlag = false;
+	if (!path || !path[0]) {
+		return 0;
+	}
+
+	save.saveFlag = true;
+	save.saveSystem(path, myVar, myParam, sph, physics, lighting, field);
+	save.saveFlag = false;
+
+	std::ifstream file(path, std::ios::binary);
+	return file.good() ? 1 : 0;
+}
+
+EMSCRIPTEN_KEEPALIVE int web_load_scene(const char* path) {
+	save.saveFlag = false;
+	save.loadFlag = false;
+	if (!path || !path[0]) {
+		return 0;
+	}
+
+	std::ifstream file(path, std::ios::binary);
+	if (!file.good()) {
+		return 0;
+	}
+	file.close();
+
+	save.loadFlag = true;
+	save.saveSystem(path, myVar, myParam, sph, physics, lighting, field);
+	save.loadFlag = false;
+	return 1;
+}
+
+EMSCRIPTEN_KEEPALIVE int web_save_scene_to_buffer() {
+	save.saveFlag = false;
+	save.loadFlag = false;
+	const std::string dir = ensureSceneDir();
+	const std::string path = dir + "/scene.bin";
+
+	save.saveFlag = true;
+	save.saveSystem(path, myVar, myParam, sph, physics, lighting, field);
+	save.saveFlag = false;
+
+	std::ifstream file(path, std::ios::binary);
+	if (!file.is_open()) {
+		g_sceneBuffer.clear();
+		return 0;
+	}
+	file.seekg(0, std::ios::end);
+	std::streamsize size = file.tellg();
+	if (size <= 0) {
+		g_sceneBuffer.clear();
+		return 0;
+	}
+	file.seekg(0, std::ios::beg);
+	g_sceneBuffer.resize(static_cast<size_t>(size));
+	file.read(reinterpret_cast<char*>(g_sceneBuffer.data()), size);
+	file.close();
+	std::filesystem::remove(path);
+	return static_cast<int>(g_sceneBuffer.size());
+}
+
+EMSCRIPTEN_KEEPALIVE uint8_t* web_get_scene_buffer_ptr() {
+	if (g_sceneBuffer.empty()) {
+		return nullptr;
+	}
+	return g_sceneBuffer.data();
+}
+
+EMSCRIPTEN_KEEPALIVE int web_load_scene_from_buffer(const uint8_t* data, int size) {
+	if (!data || size <= 0) {
+		return 0;
+	}
+	const std::string dir = ensureSceneDir();
+	const std::string path = dir + "/scene.bin";
+	std::ofstream file(path, std::ios::binary);
+	if (!file.is_open()) {
+		return 0;
+	}
+	file.write(reinterpret_cast<const char*>(data), size);
+	file.close();
+
+	save.saveFlag = false;
+	save.loadFlag = true;
+	save.saveSystem(path, myVar, myParam, sph, physics, lighting, field);
+	save.loadFlag = false;
+	std::filesystem::remove(path);
+	return 1;
+}
+
+EMSCRIPTEN_KEEPALIVE int web_build_scene_json() {
+	std::ostringstream out;
+	out << "{\"version\":1,";
+
+	out << "\"walls\":[";
+	bool first = true;
+	for (const Wall& w : lighting.walls) {
+		if (!first) {
+			out << ",";
+		}
+		first = false;
+		out << "{";
+		out << "\"vA\":";
+		appendVec2(out, w.vA);
+		out << ",\"vB\":";
+		appendVec2(out, w.vB);
+		out << ",\"normal\":";
+		appendVec2(out, w.normal);
+		out << ",\"normalVA\":";
+		appendVec2(out, w.normalVA);
+		out << ",\"normalVB\":";
+		appendVec2(out, w.normalVB);
+		out << ",\"isBeingSpawned\":" << (w.isBeingSpawned ? "true" : "false");
+		out << ",\"vAisBeingMoved\":" << (w.vAisBeingMoved ? "true" : "false");
+		out << ",\"vBisBeingMoved\":" << (w.vBisBeingMoved ? "true" : "false");
+		out << ",\"apparentColor\":";
+		appendColor(out, w.apparentColor);
+		out << ",\"baseColor\":";
+		appendColor(out, w.baseColor);
+		out << ",\"specularColor\":";
+		appendColor(out, w.specularColor);
+		out << ",\"refractionColor\":";
+		appendColor(out, w.refractionColor);
+		out << ",\"emissionColor\":";
+		appendColor(out, w.emissionColor);
+		out << ",\"baseColorVal\":" << w.baseColorVal;
+		out << ",\"specularColorVal\":" << w.specularColorVal;
+		out << ",\"refractionColorVal\":" << w.refractionColorVal;
+		out << ",\"specularRoughness\":" << w.specularRoughness;
+		out << ",\"refractionRoughness\":" << w.refractionRoughness;
+		out << ",\"refractionAmount\":" << w.refractionAmount;
+		out << ",\"ior\":" << w.IOR;
+		out << ",\"dispersion\":" << w.dispersionStrength;
+		out << ",\"isShapeWall\":" << (w.isShapeWall ? "true" : "false");
+		out << ",\"isShapeClosed\":" << (w.isShapeClosed ? "true" : "false");
+		out << ",\"shapeId\":" << w.shapeId;
+		out << ",\"id\":" << w.id;
+		out << ",\"isSelected\":" << (w.isSelected ? "true" : "false");
+		out << "}";
+	}
+	out << "],";
+
+	out << "\"shapes\":[";
+	first = true;
+	for (const Shape& s : lighting.shapes) {
+		if (!first) {
+			out << ",";
+		}
+		first = false;
+		out << "{";
+		out << "\"wallIds\":[";
+		for (size_t i = 0; i < s.myWallIds.size(); ++i) {
+			if (i) out << ",";
+			out << s.myWallIds[i];
+		}
+		out << "]";
+		std::vector<glm::vec2> polygon = s.polygonVerts;
+		if (polygon.empty() && !s.myWallIds.empty()) {
+			for (uint32_t wallId : s.myWallIds) {
+				const Wall* w = s.getWallById(lighting.walls, wallId);
+				if (w) {
+					polygon.push_back(w->vA);
+				}
+			}
+		}
+		out << ",\"polygon\":[";
+		for (size_t i = 0; i < polygon.size(); ++i) {
+			if (i) out << ",";
+			appendVec2(out, polygon[i]);
+		}
+		out << "]";
+		out << ",\"helpers\":[";
+		for (size_t i = 0; i < s.helpers.size(); ++i) {
+			if (i) out << ",";
+			appendVec2(out, s.helpers[i]);
+		}
+		out << "]";
+		out << ",\"baseColor\":";
+		appendColor(out, s.baseColor);
+		out << ",\"specularColor\":";
+		appendColor(out, s.specularColor);
+		out << ",\"refractionColor\":";
+		appendColor(out, s.refractionColor);
+		out << ",\"emissionColor\":";
+		appendColor(out, s.emissionColor);
+		out << ",\"specularRoughness\":" << s.specularRoughness;
+		out << ",\"refractionRoughness\":" << s.refractionRoughness;
+		out << ",\"refractionAmount\":" << s.refractionAmount;
+		out << ",\"ior\":" << s.IOR;
+		out << ",\"dispersion\":" << s.dispersionStrength;
+		out << ",\"id\":" << s.id;
+		out << ",\"h1\":";
+		appendVec2(out, s.h1);
+		out << ",\"h2\":";
+		appendVec2(out, s.h2);
+		out << ",\"isBeingSpawned\":" << (s.isBeingSpawned ? "true" : "false");
+		out << ",\"isBeingMoved\":" << (s.isBeingMoved ? "true" : "false");
+		out << ",\"isShapeClosed\":" << (s.isShapeClosed ? "true" : "false");
+		out << ",\"type\":" << static_cast<int>(s.shapeType);
+		out << ",\"drawHoverHelpers\":" << (s.drawHoverHelpers ? "true" : "false");
+		out << ",\"oldDrawHelperPos\":";
+		appendVec2(out, s.oldDrawHelperPos);
+		out << ",\"secondHelper\":" << (s.secondHelper ? "true" : "false");
+		out << ",\"thirdHelper\":" << (s.thirdHelper ? "true" : "false");
+		out << ",\"fourthHelper\":" << (s.fourthHelper ? "true" : "false");
+		out << ",\"Tempsh2Length\":" << s.Tempsh2Length;
+		out << ",\"Tempsh2LengthSymmetry\":" << s.Tempsh2LengthSymmetry;
+		out << ",\"tempDist\":" << s.tempDist;
+		out << ",\"moveH2\":";
+		appendVec2(out, s.moveH2);
+		out << ",\"isThirdBeingMoved\":" << (s.isThirdBeingMoved ? "true" : "false");
+		out << ",\"isFourthBeingMoved\":" << (s.isFourthBeingMoved ? "true" : "false");
+		out << ",\"isFifthBeingMoved\":" << (s.isFifthBeingMoved ? "true" : "false");
+		out << ",\"isFifthFourthMoved\":" << (s.isFifthFourthMoved ? "true" : "false");
+		out << ",\"symmetricalLens\":" << (s.symmetricalLens ? "true" : "false");
+		out << ",\"wallAId\":" << s.wallAId;
+		out << ",\"wallBId\":" << s.wallBId;
+		out << ",\"wallCId\":" << s.wallCId;
+		out << ",\"lensSegments\":" << s.lensSegments;
+		out << ",\"startAngle\":" << s.startAngle;
+		out << ",\"endAngle\":" << s.endAngle;
+		out << ",\"startAngleSymmetry\":" << s.startAngleSymmetry;
+		out << ",\"endAngleSymmetry\":" << s.endAngleSymmetry;
+		out << ",\"center\":";
+		appendVec2(out, s.center);
+		out << ",\"radius\":" << s.radius;
+		out << ",\"centerSymmetry\":";
+		appendVec2(out, s.centerSymmetry);
+		out << ",\"radiusSymmetry\":" << s.radiusSymmetry;
+		out << ",\"arcEnd\":";
+		appendVec2(out, s.arcEnd);
+		out << ",\"globalLensPrev\":";
+		appendVec2(out, s.globalLensPrev);
+		out << "}";
+	}
+	out << "],";
+
+	out << "\"lights\":{";
+	out << "\"point\":[";
+	first = true;
+	for (const PointLight& pl : lighting.pointLights) {
+		if (!first) {
+			out << ",";
+		}
+		first = false;
+		out << "{";
+		out << "\"pos\":";
+		appendVec2(out, pl.pos);
+		out << ",\"isBeingMoved\":" << (pl.isBeingMoved ? "true" : "false");
+		out << ",\"color\":";
+		appendColor(out, pl.color);
+		out << ",\"apparentColor\":";
+		appendColor(out, pl.apparentColor);
+		out << ",\"isSelected\":" << (pl.isSelected ? "true" : "false");
+		out << "}";
+	}
+	out << "],";
+	out << "\"area\":[";
+	first = true;
+	for (const AreaLight& al : lighting.areaLights) {
+		if (!first) {
+			out << ",";
+		}
+		first = false;
+		out << "{";
+		out << "\"vA\":";
+		appendVec2(out, al.vA);
+		out << ",\"vB\":";
+		appendVec2(out, al.vB);
+		out << ",\"isBeingSpawned\":" << (al.isBeingSpawned ? "true" : "false");
+		out << ",\"vAisBeingMoved\":" << (al.vAisBeingMoved ? "true" : "false");
+		out << ",\"vBisBeingMoved\":" << (al.vBisBeingMoved ? "true" : "false");
+		out << ",\"color\":";
+		appendColor(out, al.color);
+		out << ",\"apparentColor\":";
+		appendColor(out, al.apparentColor);
+		out << ",\"isSelected\":" << (al.isSelected ? "true" : "false");
+		out << ",\"spread\":" << al.spread;
+		out << "}";
+	}
+	out << "],";
+	out << "\"cone\":[";
+	first = true;
+	for (const ConeLight& cl : lighting.coneLights) {
+		if (!first) {
+			out << ",";
+		}
+		first = false;
+		out << "{";
+		out << "\"vA\":";
+		appendVec2(out, cl.vA);
+		out << ",\"vB\":";
+		appendVec2(out, cl.vB);
+		out << ",\"isBeingSpawned\":" << (cl.isBeingSpawned ? "true" : "false");
+		out << ",\"vAisBeingMoved\":" << (cl.vAisBeingMoved ? "true" : "false");
+		out << ",\"vBisBeingMoved\":" << (cl.vBisBeingMoved ? "true" : "false");
+		out << ",\"color\":";
+		appendColor(out, cl.color);
+		out << ",\"apparentColor\":";
+		appendColor(out, cl.apparentColor);
+		out << ",\"isSelected\":" << (cl.isSelected ? "true" : "false");
+		out << ",\"spread\":" << cl.spread;
+		out << "}";
+	}
+	out << "]}";
+
+	out << "}";
+
+	g_sceneJson = out.str();
+	return static_cast<int>(g_sceneJson.size());
+}
+
+EMSCRIPTEN_KEEPALIVE const char* web_get_scene_json_ptr() {
+	return g_sceneJson.empty() ? nullptr : g_sceneJson.c_str();
+}
+
+EMSCRIPTEN_KEEPALIVE int web_load_scene_json(const char* json) {
+	if (!json || !json[0]) {
+		return 0;
+	}
+	YAML::Node root;
+	try {
+		root = YAML::Load(json);
+	}
+	catch (const YAML::Exception&) {
+		return 0;
+	}
+
+	lighting.walls.clear();
+	lighting.shapes.clear();
+	lighting.pointLights.clear();
+	lighting.areaLights.clear();
+	lighting.coneLights.clear();
+
+	const YAML::Node wallsNode = root["walls"];
+	if (wallsNode && wallsNode.IsSequence()) {
+		for (const auto& node : wallsNode) {
+			const glm::vec2 vA = readVec2(node["vA"]);
+			const glm::vec2 vB = readVec2(node["vB"]);
+			const Color baseColor = readColor(node["baseColor"], WHITE);
+			const Color specularColor = readColor(node["specularColor"], WHITE);
+			const Color refractionColor = readColor(node["refractionColor"], WHITE);
+			const Color emissionColor = readColor(node["emissionColor"], { 255, 255, 255, 0 });
+			const float specularRoughness = node["specularRoughness"].as<float>(lighting.wallSpecularRoughness);
+			const float refractionRoughness = node["refractionRoughness"].as<float>(lighting.wallRefractionRoughness);
+			const float refractionAmount = node["refractionAmount"].as<float>(lighting.wallRefractionAmount);
+			const float ior = node["ior"].as<float>(lighting.wallIOR);
+			const float dispersion = node["dispersion"].as<float>(lighting.wallDispersion);
+			const bool isShapeWall = node["isShapeWall"].as<bool>(false);
+
+			lighting.walls.emplace_back(vA, vB, isShapeWall, baseColor, specularColor, refractionColor, emissionColor,
+				specularRoughness, refractionRoughness, refractionAmount, ior, dispersion);
+			Wall& w = lighting.walls.back();
+			w.normal = readVec2(node["normal"]);
+			w.normalVA = readVec2(node["normalVA"]);
+			w.normalVB = readVec2(node["normalVB"]);
+			w.isBeingSpawned = node["isBeingSpawned"].as<bool>(false);
+			w.vAisBeingMoved = node["vAisBeingMoved"].as<bool>(false);
+			w.vBisBeingMoved = node["vBisBeingMoved"].as<bool>(false);
+			w.apparentColor = readColor(node["apparentColor"], WHITE);
+			w.baseColorVal = node["baseColorVal"].as<float>(w.baseColorVal);
+			w.specularColorVal = node["specularColorVal"].as<float>(w.specularColorVal);
+			w.refractionColorVal = node["refractionColorVal"].as<float>(w.refractionColorVal);
+			w.isShapeWall = node["isShapeWall"].as<bool>(w.isShapeWall);
+			w.isShapeClosed = node["isShapeClosed"].as<bool>(false);
+			w.shapeId = node["shapeId"].as<uint32_t>(0);
+			w.id = node["id"].as<uint32_t>(w.id);
+			w.isSelected = node["isSelected"].as<bool>(false);
+		}
+	}
+
+	const YAML::Node shapesNode = root["shapes"];
+	if (shapesNode && shapesNode.IsSequence()) {
+		for (const auto& node : shapesNode) {
+			const int type = node["type"].as<int>(0);
+			const glm::vec2 h1 = readVec2(node["h1"]);
+			const glm::vec2 h2 = readVec2(node["h2"]);
+			const Color baseColor = readColor(node["baseColor"], WHITE);
+			const Color specularColor = readColor(node["specularColor"], WHITE);
+			const Color refractionColor = readColor(node["refractionColor"], WHITE);
+			const Color emissionColor = readColor(node["emissionColor"], { 255, 255, 255, 0 });
+			const float specularRoughness = node["specularRoughness"].as<float>(lighting.wallSpecularRoughness);
+			const float refractionRoughness = node["refractionRoughness"].as<float>(lighting.wallRefractionRoughness);
+			const float refractionAmount = node["refractionAmount"].as<float>(lighting.wallRefractionAmount);
+			const float ior = node["ior"].as<float>(lighting.wallIOR);
+			const float dispersion = node["dispersion"].as<float>(lighting.wallDispersion);
+
+			Shape s(static_cast<ShapeType>(type), h1, h2, &lighting.walls,
+				baseColor, specularColor, refractionColor, emissionColor,
+				specularRoughness, refractionRoughness, refractionAmount, ior, dispersion);
+			s.id = node["id"].as<uint32_t>(s.id);
+			s.isBeingSpawned = node["isBeingSpawned"].as<bool>(false);
+			s.isBeingMoved = node["isBeingMoved"].as<bool>(false);
+			s.isShapeClosed = node["isShapeClosed"].as<bool>(true);
+			s.drawHoverHelpers = node["drawHoverHelpers"].as<bool>(false);
+			s.oldDrawHelperPos = readVec2(node["oldDrawHelperPos"]);
+			s.symmetricalLens = node["symmetricalLens"].as<bool>(s.symmetricalLens);
+			s.helpers = readVec2List(node["helpers"]);
+			s.polygonVerts = readVec2List(node["polygon"]);
+			s.myWallIds = readUintList(node["wallIds"]);
+			s.secondHelper = node["secondHelper"].as<bool>(false);
+			s.thirdHelper = node["thirdHelper"].as<bool>(false);
+			s.fourthHelper = node["fourthHelper"].as<bool>(false);
+			s.Tempsh2Length = node["Tempsh2Length"].as<float>(0.0f);
+			s.Tempsh2LengthSymmetry = node["Tempsh2LengthSymmetry"].as<float>(0.0f);
+			s.tempDist = node["tempDist"].as<float>(0.0f);
+			s.moveH2 = readVec2(node["moveH2"]);
+			s.isThirdBeingMoved = node["isThirdBeingMoved"].as<bool>(false);
+			s.isFourthBeingMoved = node["isFourthBeingMoved"].as<bool>(false);
+			s.isFifthBeingMoved = node["isFifthBeingMoved"].as<bool>(false);
+			s.isFifthFourthMoved = node["isFifthFourthMoved"].as<bool>(false);
+			s.wallAId = node["wallAId"].as<uint32_t>(s.wallAId);
+			s.wallBId = node["wallBId"].as<uint32_t>(s.wallBId);
+			s.wallCId = node["wallCId"].as<uint32_t>(s.wallCId);
+			s.lensSegments = node["lensSegments"].as<int>(s.lensSegments);
+			s.startAngle = node["startAngle"].as<float>(s.startAngle);
+			s.endAngle = node["endAngle"].as<float>(s.endAngle);
+			s.startAngleSymmetry = node["startAngleSymmetry"].as<float>(s.startAngleSymmetry);
+			s.endAngleSymmetry = node["endAngleSymmetry"].as<float>(s.endAngleSymmetry);
+			s.center = readVec2(node["center"]);
+			s.radius = node["radius"].as<float>(s.radius);
+			s.centerSymmetry = readVec2(node["centerSymmetry"]);
+			s.radiusSymmetry = node["radiusSymmetry"].as<float>(s.radiusSymmetry);
+			s.arcEnd = readVec2(node["arcEnd"]);
+			s.globalLensPrev = readVec2(node["globalLensPrev"]);
+			s.walls = &lighting.walls;
+
+			bool hasValidWallIds = !s.myWallIds.empty();
+			if (hasValidWallIds) {
+				for (uint32_t wallId : s.myWallIds) {
+					if (!s.getWallById(lighting.walls, wallId)) {
+						hasValidWallIds = false;
+						break;
+					}
+				}
+			}
+
+			if (!hasValidWallIds) {
+				s.myWallIds.clear();
+				const std::vector<glm::vec2>& polygon = s.polygonVerts;
+				if (polygon.size() >= 2) {
+					for (size_t i = 0; i < polygon.size(); ++i) {
+						const glm::vec2 vA = polygon[i];
+						const glm::vec2 vB = polygon[(i + 1) % polygon.size()];
+						lighting.walls.emplace_back(vA, vB, true, baseColor, specularColor, refractionColor, emissionColor,
+							specularRoughness, refractionRoughness, refractionAmount, ior, dispersion);
+						Wall& w = lighting.walls.back();
+						w.isBeingSpawned = false;
+						w.vAisBeingMoved = false;
+						w.vBisBeingMoved = false;
+						w.isShapeWall = true;
+						w.isShapeClosed = s.isShapeClosed;
+						w.shapeId = s.id;
+						w.isSelected = false;
+						w.apparentColor = WHITE;
+						s.myWallIds.push_back(w.id);
+					}
+				}
+			} else {
+				for (uint32_t wallId : s.myWallIds) {
+					Wall* w = s.getWallById(lighting.walls, wallId);
+					if (w) {
+						w->isShapeWall = true;
+						w->isShapeClosed = s.isShapeClosed;
+						w->shapeId = s.id;
+					}
+				}
+			}
+
+			s.calculateWallsNormals();
+			lighting.shapes.push_back(s);
+		}
+	}
+
+	const YAML::Node lightsNode = root["lights"];
+	if (lightsNode) {
+		const YAML::Node pointNode = lightsNode["point"];
+		if (pointNode && pointNode.IsSequence()) {
+			for (const auto& node : pointNode) {
+				const glm::vec2 pos = readVec2(node["pos"]);
+				const Color color = readColor(node["color"], WHITE);
+				PointLight p(pos, color);
+				p.isBeingMoved = node["isBeingMoved"].as<bool>(false);
+				p.apparentColor = readColor(node["apparentColor"], WHITE);
+				p.isSelected = node["isSelected"].as<bool>(false);
+				lighting.pointLights.push_back(p);
+			}
+		}
+
+		const YAML::Node areaNode = lightsNode["area"];
+		if (areaNode && areaNode.IsSequence()) {
+			for (const auto& node : areaNode) {
+				const glm::vec2 vA = readVec2(node["vA"]);
+				const glm::vec2 vB = readVec2(node["vB"]);
+				const Color color = readColor(node["color"], WHITE);
+				const float spread = node["spread"].as<float>(lighting.lightSpread);
+				AreaLight a(vA, vB, color, spread);
+				a.isBeingSpawned = node["isBeingSpawned"].as<bool>(false);
+				a.vAisBeingMoved = node["vAisBeingMoved"].as<bool>(false);
+				a.vBisBeingMoved = node["vBisBeingMoved"].as<bool>(false);
+				a.apparentColor = readColor(node["apparentColor"], WHITE);
+				a.isSelected = node["isSelected"].as<bool>(false);
+				lighting.areaLights.push_back(a);
+			}
+		}
+
+		const YAML::Node coneNode = lightsNode["cone"];
+		if (coneNode && coneNode.IsSequence()) {
+			for (const auto& node : coneNode) {
+				const glm::vec2 vA = readVec2(node["vA"]);
+				const glm::vec2 vB = readVec2(node["vB"]);
+				const Color color = readColor(node["color"], WHITE);
+				const float spread = node["spread"].as<float>(lighting.lightSpread);
+				ConeLight c(vA, vB, color, spread);
+				c.isBeingSpawned = node["isBeingSpawned"].as<bool>(false);
+				c.vAisBeingMoved = node["vAisBeingMoved"].as<bool>(false);
+				c.vBisBeingMoved = node["vBisBeingMoved"].as<bool>(false);
+				c.apparentColor = readColor(node["apparentColor"], WHITE);
+				c.isSelected = node["isSelected"].as<bool>(false);
+				lighting.coneLights.push_back(c);
+			}
+		}
+	}
+
+	uint32_t maxWallId = 0;
+	for (const Wall& w : lighting.walls) {
+		if (w.id > maxWallId) {
+			maxWallId = w.id;
+		}
+	}
+	globalWallId = maxWallId + 1;
+
+	uint32_t maxShapeId = 0;
+	for (const Shape& s : lighting.shapes) {
+		if (s.id > maxShapeId) {
+			maxShapeId = s.id;
+		}
+	}
+	globalShapeId = maxShapeId + 1;
+
+	for (Wall& w : lighting.walls) {
+		if (!w.isShapeWall) {
+			lighting.calculateWallNormal(w);
+			w.normalVA = w.normal;
+			w.normalVB = w.normal;
+		}
+	}
+
+	lighting.shouldRender = true;
+	return 1;
 }
 
 EMSCRIPTEN_KEEPALIVE void web_set_glow_enabled(int enabled) {
@@ -251,6 +902,225 @@ EMSCRIPTEN_KEEPALIVE float web_get_particle_size_multiplier() {
 	return myVar.particleSizeMultiplier;
 }
 
+EMSCRIPTEN_KEEPALIVE int web_get_fps() {
+	return GetFPS();
+}
+
+EMSCRIPTEN_KEEPALIVE float web_get_frame_time() {
+	return GetFrameTime();
+}
+
+EMSCRIPTEN_KEEPALIVE int web_get_particle_count() {
+	return static_cast<int>(myParam.pParticles.size());
+}
+
+EMSCRIPTEN_KEEPALIVE int web_get_selected_particle_count() {
+	return static_cast<int>(myParam.pParticlesSelected.size());
+}
+
+EMSCRIPTEN_KEEPALIVE int web_get_total_lights() {
+	return lighting.totalLights;
+}
+
+EMSCRIPTEN_KEEPALIVE int web_get_accumulated_rays() {
+	return lighting.accumulatedRays;
+}
+
+EMSCRIPTEN_KEEPALIVE void web_set_dark_matter_enabled(int enabled) {
+	myVar.isDarkMatterEnabled = (enabled != 0);
+}
+
+EMSCRIPTEN_KEEPALIVE int web_get_dark_matter_enabled() {
+	return myVar.isDarkMatterEnabled ? 1 : 0;
+}
+
+EMSCRIPTEN_KEEPALIVE void web_set_looping_space_enabled(int enabled) {
+	myVar.isPeriodicBoundaryEnabled = (enabled != 0);
+}
+
+EMSCRIPTEN_KEEPALIVE int web_get_looping_space_enabled() {
+	return myVar.isPeriodicBoundaryEnabled ? 1 : 0;
+}
+
+EMSCRIPTEN_KEEPALIVE void web_set_fluid_ground_enabled(int enabled) {
+	myVar.sphGround = (enabled != 0);
+}
+
+EMSCRIPTEN_KEEPALIVE int web_get_fluid_ground_enabled() {
+	return myVar.sphGround ? 1 : 0;
+}
+
+EMSCRIPTEN_KEEPALIVE void web_set_temperature_enabled(int enabled) {
+	myVar.isTempEnabled = (enabled != 0);
+}
+
+EMSCRIPTEN_KEEPALIVE int web_get_temperature_enabled() {
+	return myVar.isTempEnabled ? 1 : 0;
+}
+
+EMSCRIPTEN_KEEPALIVE void web_set_highlight_selected(int enabled) {
+	myParam.colorVisuals.selectedColor = (enabled != 0);
+}
+
+EMSCRIPTEN_KEEPALIVE int web_get_highlight_selected() {
+	return myParam.colorVisuals.selectedColor ? 1 : 0;
+}
+
+EMSCRIPTEN_KEEPALIVE void web_set_constraints_enabled(int enabled) {
+	myVar.constraintsEnabled = (enabled != 0);
+}
+
+EMSCRIPTEN_KEEPALIVE int web_get_constraints_enabled() {
+	return myVar.constraintsEnabled ? 1 : 0;
+}
+
+EMSCRIPTEN_KEEPALIVE void web_set_unbreakable_constraints(int enabled) {
+	myVar.unbreakableConstraints = (enabled != 0);
+}
+
+EMSCRIPTEN_KEEPALIVE int web_get_unbreakable_constraints() {
+	return myVar.unbreakableConstraints ? 1 : 0;
+}
+
+EMSCRIPTEN_KEEPALIVE void web_set_constraint_after_drawing(int enabled) {
+	myVar.constraintAfterDrawing = (enabled != 0);
+}
+
+EMSCRIPTEN_KEEPALIVE int web_get_constraint_after_drawing() {
+	return myVar.constraintAfterDrawing ? 1 : 0;
+}
+
+EMSCRIPTEN_KEEPALIVE void web_set_draw_constraints(int enabled) {
+	myVar.drawConstraints = (enabled != 0);
+	if (myVar.drawConstraints) {
+		myVar.visualizeMesh = false;
+	}
+}
+
+EMSCRIPTEN_KEEPALIVE int web_get_draw_constraints() {
+	return myVar.drawConstraints ? 1 : 0;
+}
+
+EMSCRIPTEN_KEEPALIVE void web_set_visualize_mesh(int enabled) {
+	myVar.visualizeMesh = (enabled != 0);
+	if (myVar.visualizeMesh) {
+		myVar.drawConstraints = false;
+	}
+}
+
+EMSCRIPTEN_KEEPALIVE int web_get_visualize_mesh() {
+	return myVar.visualizeMesh ? 1 : 0;
+}
+
+EMSCRIPTEN_KEEPALIVE void web_set_constraint_stress_color(int enabled) {
+	myVar.constraintStressColor = (enabled != 0);
+}
+
+EMSCRIPTEN_KEEPALIVE int web_get_constraint_stress_color() {
+	return myVar.constraintStressColor ? 1 : 0;
+}
+
+EMSCRIPTEN_KEEPALIVE void web_set_gravity_field_enabled(int enabled) {
+	bool next = (enabled != 0);
+	if (myVar.isGravityFieldEnabled != next) {
+		myVar.isGravityFieldEnabled = next;
+		field.computeField = true;
+	}
+}
+
+EMSCRIPTEN_KEEPALIVE int web_get_gravity_field_enabled() {
+	return myVar.isGravityFieldEnabled ? 1 : 0;
+}
+
+EMSCRIPTEN_KEEPALIVE void web_set_gravity_field_dm_particles(int enabled) {
+	myVar.gravityFieldDMParticles = (enabled != 0);
+}
+
+EMSCRIPTEN_KEEPALIVE int web_get_gravity_field_dm_particles() {
+	return myVar.gravityFieldDMParticles ? 1 : 0;
+}
+
+EMSCRIPTEN_KEEPALIVE void web_set_field_res(int res) {
+	if (res < 50) {
+		res = 50;
+	}
+	if (res > 1000) {
+		res = 1000;
+	}
+	if (field.res != res) {
+		field.res = res;
+		field.computeField = true;
+	}
+}
+
+EMSCRIPTEN_KEEPALIVE int web_get_field_res() {
+	return field.res;
+}
+
+EMSCRIPTEN_KEEPALIVE void web_set_gravity_display_threshold(float threshold) {
+	if (threshold < 10.0f) {
+		threshold = 10.0f;
+	}
+	if (threshold > 3000.0f) {
+		threshold = 3000.0f;
+	}
+	field.gravityDisplayThreshold = threshold;
+}
+
+EMSCRIPTEN_KEEPALIVE float web_get_gravity_display_threshold() {
+	return field.gravityDisplayThreshold;
+}
+
+EMSCRIPTEN_KEEPALIVE void web_set_gravity_display_softness(float softness) {
+	if (softness < 0.4f) {
+		softness = 0.4f;
+	}
+	if (softness > 8.0f) {
+		softness = 8.0f;
+	}
+	field.gravityDisplaySoftness = softness;
+}
+
+EMSCRIPTEN_KEEPALIVE float web_get_gravity_display_softness() {
+	return field.gravityDisplaySoftness;
+}
+
+EMSCRIPTEN_KEEPALIVE void web_set_gravity_display_stretch(float stretch) {
+	if (stretch < 1.0f) {
+		stretch = 1.0f;
+	}
+	if (stretch > 10000.0f) {
+		stretch = 10000.0f;
+	}
+	field.gravityStretchFactor = stretch;
+}
+
+EMSCRIPTEN_KEEPALIVE float web_get_gravity_display_stretch() {
+	return field.gravityStretchFactor;
+}
+
+EMSCRIPTEN_KEEPALIVE void web_set_gravity_custom_colors(int enabled) {
+	field.gravityCustomColors = (enabled != 0);
+}
+
+EMSCRIPTEN_KEEPALIVE int web_get_gravity_custom_colors() {
+	return field.gravityCustomColors ? 1 : 0;
+}
+
+EMSCRIPTEN_KEEPALIVE void web_set_gravity_exposure(float exposure) {
+	if (exposure < 0.001f) {
+		exposure = 0.001f;
+	}
+	if (exposure > 15.0f) {
+		exposure = 15.0f;
+	}
+	field.gravityExposure = exposure;
+}
+
+EMSCRIPTEN_KEEPALIVE float web_get_gravity_exposure() {
+	return field.gravityExposure;
+}
+
 EMSCRIPTEN_KEEPALIVE void web_set_theta(float theta) {
 	if (theta < 0.1f) {
 		theta = 0.1f;
@@ -335,6 +1205,68 @@ EMSCRIPTEN_KEEPALIVE void web_set_black_hole_init_mass(float mult) {
 
 EMSCRIPTEN_KEEPALIVE float web_get_black_hole_init_mass() {
 	return myParam.particlesSpawning.heavyParticleWeightMultiplier;
+}
+
+EMSCRIPTEN_KEEPALIVE void web_set_path_prediction_enabled(int enabled) {
+	myParam.particlesSpawning.enablePathPrediction = (enabled != 0);
+}
+
+EMSCRIPTEN_KEEPALIVE int web_get_path_prediction_enabled() {
+	return myParam.particlesSpawning.enablePathPrediction ? 1 : 0;
+}
+
+EMSCRIPTEN_KEEPALIVE void web_set_path_prediction_length(int length) {
+	if (length < 100) {
+		length = 100;
+	}
+	if (length > 2000) {
+		length = 2000;
+	}
+	myParam.particlesSpawning.predictPathLength = length;
+}
+
+EMSCRIPTEN_KEEPALIVE int web_get_path_prediction_length() {
+	return myParam.particlesSpawning.predictPathLength;
+}
+
+EMSCRIPTEN_KEEPALIVE void web_set_particle_amount_multiplier(float mult) {
+	if (mult < 0.1f) {
+		mult = 0.1f;
+	}
+	if (mult > 100.0f) {
+		mult = 100.0f;
+	}
+	myParam.particlesSpawning.particleAmountMultiplier = mult;
+}
+
+EMSCRIPTEN_KEEPALIVE float web_get_particle_amount_multiplier() {
+	return myParam.particlesSpawning.particleAmountMultiplier;
+}
+
+EMSCRIPTEN_KEEPALIVE void web_set_dark_matter_amount_multiplier(float mult) {
+	if (mult < 0.1f) {
+		mult = 0.1f;
+	}
+	if (mult > 100.0f) {
+		mult = 100.0f;
+	}
+	myParam.particlesSpawning.DMAmountMultiplier = mult;
+}
+
+EMSCRIPTEN_KEEPALIVE float web_get_dark_matter_amount_multiplier() {
+	return myParam.particlesSpawning.DMAmountMultiplier;
+}
+
+EMSCRIPTEN_KEEPALIVE void web_set_mass_multiplier_enabled(int enabled) {
+	if (myVar.isSPHEnabled) {
+		myParam.particlesSpawning.massMultiplierEnabled = false;
+		return;
+	}
+	myParam.particlesSpawning.massMultiplierEnabled = (enabled != 0);
+}
+
+EMSCRIPTEN_KEEPALIVE int web_get_mass_multiplier_enabled() {
+	return myParam.particlesSpawning.massMultiplierEnabled ? 1 : 0;
 }
 
 EMSCRIPTEN_KEEPALIVE void web_set_ambient_temperature(float temp) {

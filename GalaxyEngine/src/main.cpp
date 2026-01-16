@@ -249,6 +249,11 @@ void main() {
     vec4 newColor = texture2D(currentFrame, fragTexCoord);
     vec4 oldColor = texture2D(accumulatedFrame, fragTexCoord);
 
+    if (sampleCount <= 1.0) {
+        gl_FragColor = clamp(newColor, 0.0, 1.0) * fragColor;
+        return;
+    }
+
     vec4 combined = (oldColor * (sampleCount - 1.0) + newColor) / sampleCount;
 
     gl_FragColor = clamp(combined, 0.0, 1.0) * fragColor;
@@ -297,6 +302,11 @@ void main() {
 
     highp vec4 newColor = texture(currentFrame, fragTexCoord);
     highp vec4 oldColor = texture(accumulatedFrame, fragTexCoord);
+
+    if (sampleCount <= 1.0) {
+        finalColor = clamp(newColor, 0.0, 1.0);
+        return;
+    }
 
     finalColor = (oldColor * (sampleCount - 1.0) + newColor) / sampleCount;
 
@@ -409,16 +419,11 @@ void main() {
 
 		//------------------------ RENDER TEXTURES BELOW ------------------------//
 
-		if (useBloom && myVar.isGlowEnabled) {
-			BeginShaderMode(myBloom);
-		}
-
-		if (useBloom && myVar.isGlowEnabled) {
-			EndShaderMode();
-		}
-
 		if (myParam.myCamera.cameraChangedThisFrame) {
-			lighting.shouldRender = true;
+			if (!myVar.isOpticsEnabled || lighting.currentSamples <= lighting.maxSamples) {
+				lighting.shouldRender = true;
+				lighting.accumulationResetRequested = true;
+			}
 		}
 
 		if (myVar.longExposureFlag != prevLongExpFlag) {
@@ -468,11 +473,22 @@ void main() {
 
 			if (useAccumulationShader && myVar.isOpticsEnabled) {
 				lighting.shouldRender = true;
+				lighting.accumulationResetRequested = true;
 			}
 
 			if (useAccumulationShader && myVar.longExposureFlag) {
 				myVar.longExposureFlag = false;
 			}
+		}
+
+		if (lighting.accumulationResetRequested) {
+			BeginTextureMode(accumulatedTexture);
+			ClearBackground(BLACK);
+			EndTextureMode();
+			BeginTextureMode(pingPongTexture);
+			ClearBackground(BLACK);
+			EndTextureMode();
+			lighting.accumulationResetRequested = false;
 		}
 
 		// Ray Tracing and Long Exposure
@@ -486,7 +502,6 @@ void main() {
 			SetShaderValueTexture(accumulationShader, accumulatedFrameLoc, accumulatedTexture.texture);
 
 			float sampleCount = 1.0f;
-
 			if (myVar.isOpticsEnabled) {
 				sampleCount = static_cast<float>(lighting.currentSamples);
 			}
@@ -499,6 +514,10 @@ void main() {
 			}
 			else {
 				myVar.longExposureCurrent = 0;
+			}
+
+			if (sampleCount < 1.0f) {
+				sampleCount = 1.0f;
 			}
 
 			SetShaderValue(accumulationShader, sampleCountLoc, &sampleCount, SHADER_UNIFORM_FLOAT);
@@ -522,23 +541,31 @@ void main() {
 			}
 		}
 #if defined(EMSCRIPTEN)
-		BeginTextureMode(accumulatedTexture);
-		ClearBackground(BLACK);
-		DrawTextureRec(
-			myParticlesTexture.texture,
-			Rectangle{ 0, 0, (float)GetScreenWidth(), -((float)GetScreenHeight()) },
-			Vector2{ 0, 0 },
-			WHITE
-		);
-		EndTextureMode();
+		if (!useAccumulationShader) {
+			BeginTextureMode(accumulatedTexture);
+			ClearBackground(BLACK);
+			DrawTextureRec(
+				myParticlesTexture.texture,
+				Rectangle{ 0, 0, (float)GetScreenWidth(), -((float)GetScreenHeight()) },
+				Vector2{ 0, 0 },
+				WHITE
+			);
+			EndTextureMode();
+		}
 #endif
 
+		if (useBloom && myVar.isGlowEnabled) {
+			BeginShaderMode(myBloom);
+		}
 		DrawTextureRec(
 			accumulatedTexture.texture,
 			Rectangle{ 0, 0, (float)GetScreenWidth(), -((float)GetScreenHeight()) },
 			Vector2{ 0, 0 },
 			WHITE
 		);
+		if (useBloom && myVar.isGlowEnabled) {
+			EndShaderMode();
+		}
 
 
 		DrawTextureRec(

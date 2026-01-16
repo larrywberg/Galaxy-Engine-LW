@@ -542,6 +542,7 @@ void Physics::mergerSolver(std::vector<ParticlePhysics>& pParticles, std::vector
 }
 
 void Physics::physicsUpdate(std::vector<ParticlePhysics>& pParticles, std::vector<ParticleRendering>& rParticles, UpdateVariables& myVar, bool& sphGround) {
+	const float accelScale = myVar.useSymplecticIntegrator ? 1.0f : 1.5f;
 	if (myVar.isPeriodicBoundaryEnabled) {
 
 #pragma omp parallel for schedule(dynamic)
@@ -551,7 +552,7 @@ void Physics::physicsUpdate(std::vector<ParticlePhysics>& pParticles, std::vecto
 
 			pParticle.prevVel = pParticle.vel;
 
-			pParticle.vel += myVar.timeFactor * 1.5f * pParticle.acc;
+			pParticle.vel += myVar.timeFactor * accelScale * pParticle.acc;
 
 			// Max velocity for SPH
 			if (myVar.isSPHEnabled) {
@@ -589,7 +590,7 @@ void Physics::physicsUpdate(std::vector<ParticlePhysics>& pParticles, std::vecto
 
 			pParticle.prevVel = pParticle.vel;
 
-			pParticle.vel += myVar.timeFactor * 1.5f * pParticle.acc;
+			pParticle.vel += myVar.timeFactor * accelScale * pParticle.acc;
 
 			// Max velocity for SPH
 			if (myVar.isSPHEnabled) {
