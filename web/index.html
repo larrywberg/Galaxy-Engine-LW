@@ -136,6 +136,11 @@
       const loadingStatus = document.getElementById("loading-status");
       const loadingFill = document.querySelector(".loading-bar-fill");
       const preferredColorSpace = "srgb";
+      const isLocalHost = window.location.hostname === "localhost"
+        || window.location.hostname === "127.0.0.1";
+      const debugLogs = new URLSearchParams(window.location.search).has("debug");
+      const silenceLogs = !isLocalHost && !debugLogs;
+      const silentLog = () => {};
 
       let totalDependencies = 0;
       function setLoadingVisible(visible) {
@@ -214,6 +219,8 @@
 
       window.Module = {
         canvas,
+        print: silenceLogs ? silentLog : undefined,
+        printErr: silenceLogs ? silentLog : undefined,
         webglContextAttributes: {
           alpha: false,
           premultipliedAlpha: false,

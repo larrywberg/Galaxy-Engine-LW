@@ -27,6 +27,10 @@ int main(int argc, char** argv) {
 	}
 
 	InitWindow(myVar.screenWidth, myVar.screenHeight, "Galaxy Engine");
+	myVar.screenWidth = GetScreenWidth();
+	myVar.screenHeight = GetScreenHeight();
+	myVar.halfScreenWidth = myVar.screenWidth * 0.5f;
+	myVar.halfScreenHeight = myVar.screenHeight * 0.5f;
 
 	// ---- Config ---- //
 
@@ -443,6 +447,10 @@ void main() {
 		}
 
 		if (GetScreenWidth() != prevScreenWidth || GetScreenHeight() != prevScreenHeight) {
+			myVar.screenWidth = GetScreenWidth();
+			myVar.screenHeight = GetScreenHeight();
+			myVar.halfScreenWidth = myVar.screenWidth * 0.5f;
+			myVar.halfScreenHeight = myVar.screenHeight * 0.5f;
 			const float deltaX = (static_cast<float>(GetScreenWidth()) - static_cast<float>(prevScreenWidth)) * 0.5f;
 			const float deltaY = (static_cast<float>(GetScreenHeight()) - static_cast<float>(prevScreenHeight)) * 0.5f;
 			// Keep the camera offset anchored relative to the screen center after resize.

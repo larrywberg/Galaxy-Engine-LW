@@ -562,6 +562,7 @@ void UI::uiLogic(UpdateParameters& myParam, UpdateVariables& myVar, SPH& sph, Sa
 			ImGui::EndTabItem();
 		}
 
+#if GE_ENABLE_SOUND
 		if (ImGui::BeginTabItem("Sound")) {
 
 			bVisualsSliders = false;
@@ -573,6 +574,7 @@ void UI::uiLogic(UpdateParameters& myParam, UpdateVariables& myVar, SPH& sph, Sa
 
 			ImGui::EndTabItem();
 		}
+#endif
 
 		if (ImGui::BeginTabItem("Recording")) {
 
@@ -824,6 +826,7 @@ void UI::uiLogic(UpdateParameters& myParam, UpdateVariables& myVar, SPH& sph, Sa
 			sliderHelper("Fluid Max Velocity", "Controls the maximum velocity a particle can have in Fluid mode", myVar.sphMaxVel, 0.0f, 2000.0f, parametersSliderX, parametersSliderY, enabled);
 		}
 
+#if GE_ENABLE_SOUND
 		if (bSoundWindow) {
 
 			bool enabled = true;
@@ -856,6 +859,7 @@ void UI::uiLogic(UpdateParameters& myParam, UpdateVariables& myVar, SPH& sph, Sa
 				geSound.currentSongIndex++;
 			}
 		}
+#endif
 
 		if (bRecordingSettings) {
 
@@ -1739,17 +1743,13 @@ bool UI::buttonHelper(std::string label, std::string tooltip, bool& parameter,
 		buttonSize = ImVec2(ImGui::GetContentRegionAvail().x, ImGui::GetContentRegionAvail().y);
 	}
 
-	std::vector<Sound>* soundPool = nullptr;
-
 	if (ImGui::Button(label.c_str(), buttonSize)) {
-
+#if GE_ENABLE_SOUND
+		std::vector<Sound>* soundPool = nullptr;
 		if (!parameter) {
-
 			soundPool = &GESound::soundButtonEnablePool;
-
 			if (soundPool && !soundPool->empty()) {
 				bool played = false;
-
 				for (Sound& sound : *soundPool) {
 					if (!IsSoundPlaying(sound)) {
 						PlaySound(sound);
@@ -1757,18 +1757,14 @@ bool UI::buttonHelper(std::string label, std::string tooltip, bool& parameter,
 						break;
 					}
 				}
-
 				if (!played) {
 					PlaySound(soundPool->back());
 				}
 			}
-		}
-		else {
+		} else {
 			soundPool = &GESound::soundButtonDisablePool;
-
 			if (soundPool && !soundPool->empty()) {
 				bool played = false;
-
 				for (Sound& sound : *soundPool) {
 					if (!IsSoundPlaying(sound)) {
 						PlaySound(sound);
@@ -1776,12 +1772,12 @@ bool UI::buttonHelper(std::string label, std::string tooltip, bool& parameter,
 						break;
 					}
 				}
-
 				if (!played) {
 					PlaySound(soundPool->back());
 				}
 			}
 		}
+#endif
 
 		if (canSelfDeactivate) {
 			parameter = !parameter;
@@ -1800,12 +1796,10 @@ bool UI::buttonHelper(std::string label, std::string tooltip, bool& parameter,
 
 	if (isHovered) {
 		ImGui::SetTooltip("%s", tooltip.c_str());
-
+#if GE_ENABLE_SOUND
 		int randSoundNum = rand() % 3;
-
 		if (!hoverStates[buttonId]) {
 			std::vector<Sound>* soundPool = nullptr;
-
 			switch (randSoundNum) {
 			case 0:
 				soundPool = &GESound::soundButtonHover1Pool;
@@ -1817,10 +1811,8 @@ bool UI::buttonHelper(std::string label, std::string tooltip, bool& parameter,
 				soundPool = &GESound::soundButtonHover3Pool;
 				break;
 			}
-
 			if (soundPool && !soundPool->empty()) {
 				bool played = false;
-
 				for (Sound& sound : *soundPool) {
 					if (!IsSoundPlaying(sound)) {
 						PlaySound(sound);
@@ -1828,12 +1820,12 @@ bool UI::buttonHelper(std::string label, std::string tooltip, bool& parameter,
 						break;
 					}
 				}
-
 				if (!played) {
 					PlaySound(soundPool->back());
 				}
 			}
 		}
+#endif
 	}
 
 	hoverStates[buttonId] = isHovered;
@@ -1885,19 +1877,15 @@ bool UI::sliderHelper(std::string label, std::string tooltip, float& parameter, 
 		isSliderUsed = true;
 	}
 
-	std::vector<Sound>* soundPool = nullptr;
-
 	static bool hasBeenPressed = false;
 
 	if (ImGui::IsItemHovered() && ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
 
 		hasBeenPressed = true;
-
-		soundPool = &GESound::soundButtonEnablePool;
-
+#if GE_ENABLE_SOUND
+		std::vector<Sound>* soundPool = &GESound::soundButtonEnablePool;
 		if (soundPool && !soundPool->empty()) {
 			bool played = false;
-
 			for (Sound& sound : *soundPool) {
 				if (!IsSoundPlaying(sound)) {
 					PlaySound(sound);
@@ -1905,20 +1893,18 @@ bool UI::sliderHelper(std::string label, std::string tooltip, float& parameter, 
 					break;
 				}
 			}
-
 			if (!played) {
 				PlaySound(soundPool->back());
 			}
 		}
+#endif
 	}
 
 	if (hasBeenPressed && ImGui::IsMouseReleased(ImGuiMouseButton_Left)) {
-
-		soundPool = &GESound::soundButtonDisablePool;
-
+#if GE_ENABLE_SOUND
+		std::vector<Sound>* soundPool = &GESound::soundButtonDisablePool;
 		if (soundPool && !soundPool->empty()) {
 			bool played = false;
-
 			for (Sound& sound : *soundPool) {
 				if (!IsSoundPlaying(sound)) {
 					PlaySound(sound);
@@ -1926,11 +1912,11 @@ bool UI::sliderHelper(std::string label, std::string tooltip, float& parameter, 
 					break;
 				}
 			}
-
 			if (!played) {
 				PlaySound(soundPool->back());
 			}
 		}
+#endif
 
 		hasBeenPressed = false;
 	}
@@ -1945,7 +1931,8 @@ bool UI::sliderHelper(std::string label, std::string tooltip, float& parameter, 
 
 		if (mouseDelta > 2.0f) {
 			if (!wasPlaying || parameter != prevValue) {
-				soundPool = &GESound::soundSliderSlidePool;
+#if GE_ENABLE_SOUND
+				std::vector<Sound>* soundPool = &GESound::soundSliderSlidePool;
 				if (soundPool && !soundPool->empty()) {
 					bool played = false;
 					for (Sound& sound : *soundPool) {
@@ -1963,6 +1950,7 @@ bool UI::sliderHelper(std::string label, std::string tooltip, float& parameter, 
 						lastMousePos = currentMousePos;
 					}
 				}
+#endif
 			}
 		}
 		prevValue = parameter;
@@ -1976,11 +1964,10 @@ bool UI::sliderHelper(std::string label, std::string tooltip, float& parameter, 
 	if (isHovered) {
 		ImGui::SetTooltip("%s", tooltip.c_str());
 
+#if GE_ENABLE_SOUND
 		int randSoundNum = rand() % 3;
-
 		if (!hoverStates[sliderId]) {
 			std::vector<Sound>* soundPool = nullptr;
-
 			switch (randSoundNum) {
 			case 0:
 				soundPool = &GESound::soundButtonHover1Pool;
@@ -1992,10 +1979,8 @@ bool UI::sliderHelper(std::string label, std::string tooltip, float& parameter, 
 				soundPool = &GESound::soundButtonHover3Pool;
 				break;
 			}
-
 			if (soundPool && !soundPool->empty()) {
 				bool played = false;
-
 				for (Sound& sound : *soundPool) {
 					if (!IsSoundPlaying(sound)) {
 						PlaySound(sound);
@@ -2003,12 +1988,12 @@ bool UI::sliderHelper(std::string label, std::string tooltip, float& parameter, 
 						break;
 					}
 				}
-
 				if (!played) {
 					PlaySound(soundPool->back());
 				}
 			}
 		}
+#endif
 	}
 
 	hoverStates[sliderId] = isHovered;
@@ -2064,19 +2049,15 @@ bool UI::sliderHelper(std::string label, std::string tooltip, int& parameter, in
 		isSliderUsed = true;
 	}
 
-	std::vector<Sound>* soundPool = nullptr;
-
 	static bool hasBeenPressed = false;
 
 	if (ImGui::IsItemHovered() && ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
 
 		hasBeenPressed = true;
-
-		soundPool = &GESound::soundButtonEnablePool;
-
+#if GE_ENABLE_SOUND
+		std::vector<Sound>* soundPool = &GESound::soundButtonEnablePool;
 		if (soundPool && !soundPool->empty()) {
 			bool played = false;
-
 			for (Sound& sound : *soundPool) {
 				if (!IsSoundPlaying(sound)) {
 					PlaySound(sound);
@@ -2084,20 +2065,18 @@ bool UI::sliderHelper(std::string label, std::string tooltip, int& parameter, in
 					break;
 				}
 			}
-
 			if (!played) {
 				PlaySound(soundPool->back());
 			}
 		}
+#endif
 	}
 
 	if (hasBeenPressed && ImGui::IsMouseReleased(ImGuiMouseButton_Left)) {
-
-		soundPool = &GESound::soundButtonDisablePool;
-
+#if GE_ENABLE_SOUND
+		std::vector<Sound>* soundPool = &GESound::soundButtonDisablePool;
 		if (soundPool && !soundPool->empty()) {
 			bool played = false;
-
 			for (Sound& sound : *soundPool) {
 				if (!IsSoundPlaying(sound)) {
 					PlaySound(sound);
@@ -2105,11 +2084,11 @@ bool UI::sliderHelper(std::string label, std::string tooltip, int& parameter, in
 					break;
 				}
 			}
-
 			if (!played) {
 				PlaySound(soundPool->back());
 			}
 		}
+#endif
 
 		hasBeenPressed = false;
 	}
@@ -2124,7 +2103,8 @@ bool UI::sliderHelper(std::string label, std::string tooltip, int& parameter, in
 
 		if (mouseDelta > 2.0f) {
 			if (!wasPlaying || parameter != prevValue) {
-				soundPool = &GESound::soundSliderSlidePool;
+#if GE_ENABLE_SOUND
+				std::vector<Sound>* soundPool = &GESound::soundSliderSlidePool;
 				if (soundPool && !soundPool->empty()) {
 					bool played = false;
 					for (Sound& sound : *soundPool) {
@@ -2142,6 +2122,7 @@ bool UI::sliderHelper(std::string label, std::string tooltip, int& parameter, in
 						lastMousePos = currentMousePos;
 					}
 				}
+#endif
 			}
 		}
 		prevValue = parameter;
@@ -2155,11 +2136,10 @@ bool UI::sliderHelper(std::string label, std::string tooltip, int& parameter, in
 	if (isHovered) {
 		ImGui::SetTooltip("%s", tooltip.c_str());
 
+#if GE_ENABLE_SOUND
 		int randSoundNum = rand() % 3;
-
 		if (!hoverStates[sliderId]) {
 			std::vector<Sound>* soundPool = nullptr;
-
 			switch (randSoundNum) {
 			case 0:
 				soundPool = &GESound::soundButtonHover1Pool;
@@ -2171,10 +2151,8 @@ bool UI::sliderHelper(std::string label, std::string tooltip, int& parameter, in
 				soundPool = &GESound::soundButtonHover3Pool;
 				break;
 			}
-
 			if (soundPool && !soundPool->empty()) {
 				bool played = false;
-
 				for (Sound& sound : *soundPool) {
 					if (!IsSoundPlaying(sound)) {
 						PlaySound(sound);
@@ -2182,12 +2160,12 @@ bool UI::sliderHelper(std::string label, std::string tooltip, int& parameter, in
 						break;
 					}
 				}
-
 				if (!played) {
 					PlaySound(soundPool->back());
 				}
 			}
 		}
+#endif
 	}
 
 	hoverStates[sliderId] = isHovered;

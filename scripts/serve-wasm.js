@@ -11,6 +11,8 @@ const buildFolder = isRelease ? "wasm-release" : "wasm-debug";
 const rootDir = path.resolve(__dirname, "..", "build", buildFolder);
 const uiDir = path.resolve(__dirname, "..", "web");
 const port = Number(process.env.PORT || 8080);
+const cacheDays = Number(process.env.GALAXYENGINE_CACHE_DAYS || 3);
+const cacheSeconds = Math.max(0, Math.floor(cacheDays * 24 * 60 * 60));
 
 const mimeTypes = {
   ".html": "text/html; charset=utf-8",
@@ -26,10 +28,36 @@ const mimeTypes = {
   ".txt": "text/plain; charset=utf-8"
 };
 
+const cacheableExtensions = new Set([
+  ".js",
+  ".wasm",
+  ".css",
+  ".json",
+  ".png",
+  ".jpg",
+  ".jpeg",
+  ".gif",
+  ".svg",
+  ".txt",
+  ".data",
+  ".bin",
+  ".map"
+]);
+
 function setCrossOriginHeaders(res) {
   res.setHeader("Cross-Origin-Opener-Policy", "same-origin");
   res.setHeader("Cross-Origin-Embedder-Policy", "require-corp");
   res.setHeader("Cross-Origin-Resource-Policy", "same-origin");
+}
+
+function setCacheHeaders(res, ext) {
+  if (ext === ".html" || cacheSeconds <= 0) {
+    res.setHeader("Cache-Control", "no-cache");
+    return;
+  }
+  if (cacheableExtensions.has(ext)) {
+    res.setHeader("Cache-Control", `public, max-age=${cacheSeconds}`);
+  }
 }
 
 const fallbackHtml = `<!doctype html>
@@ -71,6 +99,7 @@ const server = http.createServer((req, res) => {
     if (!uiErr && uiStats.isFile() && requestPath === "/") {
       res.statusCode = 200;
       res.setHeader("Content-Type", "text/html; charset=utf-8");
+      res.setHeader("Cache-Control", "no-cache");
       fs.createReadStream(uiIndex).pipe(res);
       return;
     }
@@ -80,6 +109,7 @@ const server = http.createServer((req, res) => {
         const ext = path.extname(uiAsset);
         res.statusCode = 200;
         res.setHeader("Content-Type", mimeTypes[ext] || "application/octet-stream");
+        setCacheHeaders(res, ext);
         fs.createReadStream(uiAsset).pipe(res);
         return;
       }
@@ -89,6 +119,7 @@ const server = http.createServer((req, res) => {
           if (requestPath === "/" || requestPath === "/GalaxyEngine.html") {
             res.statusCode = 200;
             res.setHeader("Content-Type", "text/html; charset=utf-8");
+            res.setHeader("Cache-Control", "no-cache");
             res.end(fallbackHtml);
             return;
           }
@@ -102,6 +133,7 @@ const server = http.createServer((req, res) => {
         const ext = path.extname(filePath);
         res.statusCode = 200;
         res.setHeader("Content-Type", mimeTypes[ext] || "application/octet-stream");
+        setCacheHeaders(res, ext);
         fs.createReadStream(filePath).pipe(res);
       });
     });

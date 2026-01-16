@@ -3,14 +3,13 @@
   Header set Cross-Origin-Embedder-Policy "require-corp"
   Header set Cross-Origin-Resource-Policy "same-origin"
 
-  <FilesMatch "\\.(html)$">
+  <FilesMatch "\.(html)$">
     Header set Cache-Control "no-cache, must-revalidate, max-age=0"
     Header set Pragma "no-cache"
   </FilesMatch>
 
-  <FilesMatch "^GalaxyEngine\\.(js|wasm|data|worker\\.js)$">
-    Header set Cache-Control "no-cache, must-revalidate, max-age=0"
-    Header set Pragma "no-cache"
+  <FilesMatch "^GalaxyEngine\.(js|wasm|data|worker\.js)$">
+    Header set Cache-Control "public, max-age=86400, must-revalidate"
   </FilesMatch>
 </IfModule>
 

@@ -119,3 +119,5 @@ These instructions assume you have already met the above requirements.
 - Install the [emsdk](https://emscripten.org/docs/getting_started/downloads.html) toolchain, then run `source /path/to/emsdk_env.sh` so `emcmake`/`emmake` are on your `PATH`.
 - Configure with `emcmake cmake --preset wasm-debug` (or `wasm-release`) and then `cmake --build --preset wasm-debug` to generate the HTML/JS/WASM trio under `build/wasm-debug`.
 - The wasm build already skips the FFmpeg bundle and only uses Raylib, ImGui, GLM, etc., so you can serve the output with `emrun`/`python3 -m http.server` or plug it into a Next.js shell once the UI is ready.
+- Optional (recommended): Use VS Code with Node.js + npm installed. The repo includes preconfigured npm scripts, which show up under the VS Code Explorer > **NPM SCRIPTS** panel.
+  - Examples: `npm run dev` (build wasm-debug + serve), `npm run release` (build wasm-release + serve), `npm run deploy`.

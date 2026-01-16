@@ -122,6 +122,14 @@ function formatBytes(bytes) {
   return `${value.toFixed(value >= 10 || index === 0 ? 0 : 1)} ${units[index]}`;
 }
 
+function toFieldName(label) {
+  if (typeof label !== "string") return "ge-field";
+  const slug = label.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/(^-|-$)/g, "");
+  return slug ? `ge-${slug}` : "ge-field";
+}
+
+const stopPropagation = (event) => event.stopPropagation();
+
 const TAR_BLOCK_SIZE = 512;
 
 function writeTarString(buffer, offset, value, length) {
@@ -566,6 +574,7 @@ function Panel({ title, children, style, onHover, contentStyle = {}, collapsed =
 }
 
 function Toggle({ label, value, onChange, disabled = false }) {
+  const fieldName = toFieldName(label);
   return html`
     <label
       style=${{
@@ -580,7 +589,9 @@ function Toggle({ label, value, onChange, disabled = false }) {
         type="checkbox"
         checked=${value}
         disabled=${disabled}
+        name=${fieldName}
         onChange=${(e) => onChange(e.target.checked)}
+        onKeyDown=${stopPropagation}
       />
       <span>${label}</span>
     </label>
@@ -634,6 +645,7 @@ function Slider({
 }) {
   const initialValueRef = useRef(value);
   const resolvedDefault = Number.isFinite(defaultValue) ? defaultValue : initialValueRef.current;
+  const fieldName = toFieldName(label);
   return html`
     <label
       style=${{
@@ -656,6 +668,7 @@ function Slider({
         step=${step}
         value=${value}
         disabled=${disabled}
+        name=${fieldName}
         onPointerDown=${(e) => {
           if (disabled || !e.altKey || !Number.isFinite(resolvedDefault)) return;
           e.preventDefault();
@@ -682,6 +695,7 @@ function IntSlider({
 }) {
   const initialValueRef = useRef(value);
   const resolvedDefault = Number.isFinite(defaultValue) ? defaultValue : initialValueRef.current;
+  const fieldName = toFieldName(label);
   return html`
     <label
       style=${{
@@ -704,6 +718,7 @@ function IntSlider({
         step=${step}
         value=${value}
         disabled=${disabled}
+        name=${fieldName}
         onPointerDown=${(e) => {
           if (disabled || !e.altKey || !Number.isFinite(resolvedDefault)) return;
           e.preventDefault();
@@ -722,6 +737,7 @@ function LogIntSlider({ label, value, max, onChange, tooltip, disabled = false, 
   const sliderValue = Math.round((Math.log10(value + 1) / logMax) * 100);
   const initialValueRef = useRef(value);
   const resolvedDefault = Number.isFinite(defaultValue) ? defaultValue : initialValueRef.current;
+  const fieldName = toFieldName(label);
   return html`
     <label
       style=${{
@@ -744,6 +760,7 @@ function LogIntSlider({ label, value, max, onChange, tooltip, disabled = false, 
         step=${1}
         value=${sliderValue}
         disabled=${disabled}
+        name=${fieldName}
         onPointerDown=${(e) => {
           if (disabled || !e.altKey || !Number.isFinite(resolvedDefault)) return;
           e.preventDefault();
@@ -764,6 +781,7 @@ function LogIntSlider({ label, value, max, onChange, tooltip, disabled = false, 
 function ColorPicker({ label, color, onChange }) {
   const normalized = normalizeColor(color);
   const hexValue = rgbToHex(normalized);
+  const fieldName = toFieldName(label);
   return html`
     <div style=${{ marginBottom: 12 }}>
       <label style=${{ display: "flex", flexDirection: "column", gap: 6, marginBottom: 6 }}>
@@ -772,10 +790,12 @@ function ColorPicker({ label, color, onChange }) {
           <input
             type="color"
             value=${hexValue}
+            name=${fieldName}
             onChange=${(e) => {
               const rgb = hexToRgb(e.target.value);
               onChange({ ...normalized, ...rgb });
             }}
+            onKeyDown=${stopPropagation}
           />
           <span style=${{ color: "#9aa4b2", fontSize: 12 }}>${hexValue.toUpperCase()}</span>
         </div>
@@ -808,6 +828,9 @@ function App() {
     storedState.symplecticIntegrator ?? false
   );
   const [targetFps, setTargetFps] = useState(storedState.targetFps ?? 144);
+  const [targetFpsInput, setTargetFpsInput] = useState(
+    String(storedState.targetFps ?? 144)
+  );
   const [gravity, setGravity] = useState(storedState.gravity ?? 1.0);
   const [particleSizeMultiplier, setParticleSizeMultiplier] = useState(storedState.particleSizeMultiplier ?? 1.0);
   const [darkMatterEnabled, setDarkMatterEnabled] = useState(storedState.darkMatterEnabled ?? true);
@@ -1166,6 +1189,7 @@ function App() {
 
     const targetFpsValue = getNum("targetFps", api.getTargetFps());
     setTargetFps(targetFpsValue);
+    setTargetFpsInput(String(targetFpsValue));
     api.setTargetFps(targetFpsValue);
 
     const gravityValue = getNum("gravity", api.getGravityMultiplier());
@@ -2180,6 +2204,10 @@ function App() {
   }, [api]);
 
   useEffect(() => {
+    setTargetFpsInput(String(targetFps));
+  }, [targetFps]);
+
+  useEffect(() => {
     saveUiState(buildUiStateSnapshot());
   }, [
     timePlaying,
@@ -2459,11 +2487,13 @@ function App() {
                   <span>Mode</span>
                   <select
                     value=${colorMode}
+                    name="colorMode"
                     onChange=${(e) => {
                       const next = Number(e.target.value);
                       setColorMode(next);
                       api?.setColorMode(next);
                     }}
+                    onKeyDown=${stopPropagation}
                     style=${{
                       background: "rgba(255,255,255,0.06)",
                       border: "1px solid rgba(255,255,255,0.12)",
@@ -2674,7 +2704,9 @@ function App() {
                   <select
                     value=${recordingMode}
                     disabled=${isRecording}
+                    name="recordingMode"
                     onChange=${(e) => setRecordingMode(e.target.value)}
+                    onKeyDown=${stopPropagation}
                     style=${{
                       background: "rgba(255,255,255,0.06)",
                       border: "1px solid rgba(255,255,255,0.12)",
@@ -3854,6 +3886,7 @@ function App() {
                 <span>Quick Action</span>
                 <select
                   value=${actionChoice}
+                  name="actionChoice"
                   onChange=${(e) => {
                     const next = e.target.value;
                     if (!next) return;
@@ -3861,6 +3894,7 @@ function App() {
                     action?.onSelect();
                     setActionChoice("");
                   }}
+                  onKeyDown=${stopPropagation}
                   style=${{
                     background: "rgba(255,255,255,0.06)",
                     border: "1px solid rgba(255,255,255,0.12)",
@@ -3889,8 +3923,10 @@ function App() {
                 <input
                   type="text"
                   value=${sceneName}
+                  name="sceneName"
                   placeholder="Optional name"
                   onChange=${(e) => setSceneName(e.target.value)}
+                  onKeyDown=${stopPropagation}
                   style=${{
                     background: "rgba(255,255,255,0.06)",
                     border: "1px solid rgba(255,255,255,0.12)",
@@ -3912,7 +3948,9 @@ function App() {
                 <span>Saved Scenes</span>
                 <select
                   value=${selectedSceneId}
+                  name="savedScene"
                   onChange=${(e) => setSelectedSceneId(e.target.value)}
+                  onKeyDown=${stopPropagation}
                   style=${{
                     background: "rgba(255,255,255,0.06)",
                     border: "1px solid rgba(255,255,255,0.12)",
@@ -4011,12 +4049,23 @@ function App() {
                   type="number"
                   min=${1}
                   max=${240}
-                  value=${targetFps}
-                  onChange=${(e) => {
-                    const next = Number(e.target.value || 0);
+                  value=${targetFpsInput}
+                  name="targetFps"
+                  onInput=${(e) => {
+                    const nextRaw = e.target.value;
+                    setTargetFpsInput(nextRaw);
+                    if (nextRaw === "") return;
+                    const next = Number(nextRaw);
+                    if (!Number.isFinite(next)) return;
+                    if (next < 1 || next > 240) return;
                     setTargetFps(next);
                     api?.setTargetFps(next);
                   }}
+                  onBlur=${() => {
+                    if (targetFpsInput !== "") return;
+                    setTargetFpsInput(String(targetFps));
+                  }}
+                  onKeyDown=${stopPropagation}
                   title="Caps render FPS; lowering can reduce CPU/GPU load."
                 />
               </label>
