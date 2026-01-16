@@ -18,7 +18,7 @@ public:
     bool isVideoExportEnabled = true;
 
     bool isSafeFramesEnabled = true;
-    bool isExportFramesEnabled = false;
+    bool isExportFramesEnabled = true;
 
     bool showSaveConfirmationDialog = false;
     std::string lastVideoPath;

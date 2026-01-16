@@ -805,7 +805,7 @@ function App() {
   const [timePlaying, setTimePlaying] = useState(storedState.timePlaying ?? true);
   const [timeStep, setTimeStep] = useState(storedState.timeStep ?? 1.0);
   const [symplecticIntegrator, setSymplecticIntegrator] = useState(
-    storedState.symplecticIntegrator ?? true
+    storedState.symplecticIntegrator ?? false
   );
   const [targetFps, setTargetFps] = useState(storedState.targetFps ?? 144);
   const [gravity, setGravity] = useState(storedState.gravity ?? 1.0);
@@ -934,10 +934,10 @@ function App() {
   const [localTrails, setLocalTrails] = useState(storedState.localTrails ?? false);
   const [whiteTrails, setWhiteTrails] = useState(storedState.whiteTrails ?? false);
   const [colorMode, setColorMode] = useState(storedState.colorMode ?? defaultColorMode);
-  const [pauseAfterRecording, setPauseAfterRecording] = useState(storedState.pauseAfterRecording ?? false);
+  const [pauseAfterRecording, setPauseAfterRecording] = useState(storedState.pauseAfterRecording ?? true);
   const [cleanSceneAfterRecording, setCleanSceneAfterRecording] = useState(storedState.cleanSceneAfterRecording ?? false);
   const [recordingTimeLimit, setRecordingTimeLimit] = useState(storedState.recordingTimeLimit ?? 0);
-  const [recordingMode, setRecordingMode] = useState(storedState.recordingMode ?? "webm");
+  const [recordingMode, setRecordingMode] = useState(storedState.recordingMode ?? "frames");
   const [recordingFps, setRecordingFps] = useState(storedState.recordingFps ?? 60);
   const [showBrushCursor, setShowBrushCursor] = useState(storedState.showBrushCursor ?? true);
   const [hideBrushDuringRecording, setHideBrushDuringRecording] = useState(
