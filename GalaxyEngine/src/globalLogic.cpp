@@ -1045,29 +1045,8 @@ void updateScene() {
 	myVar.halfDomainHeight = myVar.domainSize.y * 0.5f;
 
 	myVar.timeFactor = myVar.fixedDeltaTime * myVar.timeStepMultiplier * static_cast<float>(myVar.isTimePlaying);
-	if (myVar.gravityRampEnabled) {
-		if (myVar.timeFactor > 0.0f) {
-			myVar.gravityRampTime += myVar.timeFactor;
-		}
-
-		if (myVar.gravityRampSeconds > 0.0f) {
-			myVar.gravityRampTime = std::min(myVar.gravityRampTime, myVar.gravityRampSeconds);
-		}
-	}
-	else {
-		myVar.gravityRampTime = 0.0f;
-	}
-
-	float gravityMultiplier = myVar.gravityMultiplier;
-	if (myVar.gravityRampEnabled) {
-		float rampT = 1.0f;
-		if (myVar.gravityRampSeconds > 0.0f) {
-			rampT = std::clamp(myVar.gravityRampTime / myVar.gravityRampSeconds, 0.0f, 1.0f);
-		}
-		gravityMultiplier = myVar.gravityRampStartMult
-			+ (myVar.gravityMultiplier - myVar.gravityRampStartMult) * rampT;
-	}
-	myVar.G = 6.674e-11 * gravityMultiplier;
+	myVar.gravityRampTime = 0.0f;
+	myVar.G = 6.674e-11 * myVar.gravityMultiplier;
 
 	if (myVar.drawQuadtree) {
 		for (uint32_t i = 0; i < globalNodes.size(); i++) {

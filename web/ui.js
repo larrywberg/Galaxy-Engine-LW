@@ -534,6 +534,7 @@ function useWasmApi() {
         buildSceneJson: wrap("web_build_scene_json", "number", []),
         getSceneJsonPtr: wrap("web_get_scene_json_ptr", "number", []),
         loadSceneJson: wrap("web_load_scene_json", "number", ["string"]),
+        captureSceneSnapshot: wrap("web_capture_scene_snapshot", null, []),
         setToolEraser: wrap("web_set_tool_eraser", null, ["number"]),
         getToolEraser: wrap("web_get_tool_eraser", "number", []),
         setToolRadialForce: wrap("web_set_tool_radial_force", null, ["number"]),
@@ -886,6 +887,7 @@ function App() {
   const defaultTrailsLength = 8;
   const trailsLengthMax = 1500;
   const storedStateRef = useRef(loadUiState());
+  const engineSyncPendingRef = useRef(false);
   const storedState = storedStateRef.current || {};
   const initialActiveTab = LEFT_TABS.includes(storedState.activeParamTab)
     ? storedState.activeParamTab
@@ -1835,6 +1837,9 @@ function App() {
     }
     setSceneStorageError("");
     setSceneStorageNotice("");
+    if (api.captureSceneSnapshot) {
+      api.captureSceneSnapshot();
+    }
     const now = new Date();
     const id = `scene-${now.getTime()}`;
     const trimmedName = sceneName.trim();
@@ -1976,9 +1981,20 @@ function App() {
     setDefaultsNotice("Saved defaults applied.");
   };
 
+  const scheduleEngineSync = (showNotice) => {
+    if (engineSyncPendingRef.current) return;
+    engineSyncPendingRef.current = true;
+    requestAnimationFrame(() => {
+      engineSyncPendingRef.current = false;
+      applyUiStateSnapshot({});
+      if (showNotice) {
+        setDefaultsNotice("Synced UI from engine values.");
+      }
+    });
+  };
+
   const syncUiFromEngine = () => {
-    applyUiStateSnapshot({});
-    setDefaultsNotice("Synced UI from engine values.");
+    scheduleEngineSync(true);
   };
 
   const copySavedDefaults = async () => {
@@ -2403,6 +2419,9 @@ function App() {
     if (!api) return;
     applyUiStateSnapshot(loadUiState() || {});
     api.setUiHover(0);
+    window.webUiSyncFromEngine = () => {
+      scheduleEngineSync(false);
+    };
     window.webSetWindowSize = (width, height) => {
       api.setWindowSize(width, height);
     };
@@ -2422,6 +2441,11 @@ function App() {
       syncCanvasSize();
       syncCameraToViewport();
     }, 150);
+    return () => {
+      if (window.webUiSyncFromEngine) {
+        delete window.webUiSyncFromEngine;
+      }
+    };
   }, [api]);
 
   useEffect(() => {
@@ -3460,45 +3484,6 @@ function App() {
                   onChange=${(val) => {
                     setGravity(val);
                     api?.setGravityMultiplier(val);
-                  }}
-                />
-                <${Toggle}
-                  label="Gravity Ramp"
-                  value=${gravityRampEnabled}
-                  onChange=${(val) => {
-                    setGravityRampEnabled(val);
-                    api?.setGravityRampEnabled(val ? 1 : 0);
-                    if (val) {
-                      api?.setGravityRampTime(0);
-                    }
-                  }}
-                />
-                <${Slider}
-                  label="Gravity Ramp Start"
-                  value=${gravityRampStartMult}
-                  defaultValue=${0.1}
-                  min=${0}
-                  max=${5}
-                  step=${0.01}
-                  disabled=${!gravityRampEnabled}
-                  tooltip="Starting gravity multiplier during ramp."
-                  onChange=${(val) => {
-                    setGravityRampStartMult(val);
-                    api?.setGravityRampStartMult(val);
-                  }}
-                />
-                <${Slider}
-                  label="Gravity Ramp Seconds"
-                  value=${gravityRampSeconds}
-                  defaultValue=${20}
-                  min=${0}
-                  max=${120}
-                  step=${1}
-                  disabled=${!gravityRampEnabled}
-                  tooltip="Seconds to reach full gravity strength."
-                  onChange=${(val) => {
-                    setGravityRampSeconds(val);
-                    api?.setGravityRampSeconds(val);
                   }}
                 />
                 <${Toggle}

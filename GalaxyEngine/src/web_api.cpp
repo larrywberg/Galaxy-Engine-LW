@@ -275,6 +275,41 @@ static void resetCameraAfterLoad() {
 	myParam.myCamera.cameraChangedThisFrame = true;
 }
 
+static void resetTransientStateAfterLoad() {
+	myVar.isTimePlaying = true;
+	myVar.autoPausedForBrush = false;
+	myVar.wasTimePlayingBeforeBrush = false;
+	myVar.isBrushDrawing = false;
+	myVar.isDragging = false;
+	myVar.showBrushCursor = true;
+	myVar.constraintAfterDrawingFlag = false;
+	myVar.pinFlag = false;
+	myVar.unPinFlag = false;
+
+	myVar.toolSpawnHeavyParticle = false;
+	myVar.toolDrawParticles = true;
+	myVar.toolSpawnSmallGalaxy = false;
+	myVar.toolSpawnBigGalaxy = false;
+	myVar.toolSpawnStar = false;
+	myVar.toolSpawnBigBang = false;
+	myVar.toolErase = false;
+	myVar.toolRadialForce = false;
+	myVar.toolSpin = false;
+	myVar.toolMove = false;
+	myVar.toolRaiseTemp = false;
+	myVar.toolLowerTemp = false;
+	myVar.toolPointLight = false;
+	myVar.toolAreaLight = false;
+	myVar.toolConeLight = false;
+	myVar.toolCircle = false;
+	myVar.toolDrawShape = false;
+	myVar.toolLens = false;
+	myVar.toolWall = false;
+	myVar.toolMoveOptics = false;
+	myVar.toolEraseOptics = false;
+	myVar.toolSelectOptics = false;
+}
+
 static void compareWithLastSaved(const char* source) {
 	if (!g_lastSavedSnapshot.valid) {
 		const char* label = source ? source : "unknown";
@@ -810,6 +845,7 @@ EMSCRIPTEN_KEEPALIVE int web_load_scene(const char* path) {
 	save.saveSystem(path, myVar, myParam, sph, physics, lighting, field);
 	save.loadFlag = false;
 	resetCameraAfterLoad();
+	resetTransientStateAfterLoad();
 	logSceneLoadSummary("file");
 	compareWithLastSaved("file");
 	compareWithDefaults("file");
@@ -881,6 +917,7 @@ EMSCRIPTEN_KEEPALIVE int web_load_scene_from_buffer(const uint8_t* data, int siz
 	save.loadFlag = false;
 	std::filesystem::remove(path);
 	resetCameraAfterLoad();
+	resetTransientStateAfterLoad();
 	logSceneLoadSummary("buffer");
 	compareWithLastSaved("buffer");
 	compareWithDefaults("buffer");
@@ -1377,6 +1414,7 @@ EMSCRIPTEN_KEEPALIVE int web_load_scene_json(const char* json) {
 
 	lighting.shouldRender = true;
 	resetCameraAfterLoad();
+	resetTransientStateAfterLoad();
 	logSceneLoadSummary("json");
 	compareWithLastSaved("json");
 	compareWithDefaults("json");

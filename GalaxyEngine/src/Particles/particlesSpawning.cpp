@@ -10,6 +10,9 @@ void ParticlesSpawning::particlesInitialConditions(Physics& physics, UpdateVaria
 	if (myVar.isMouseNotHoveringUI && isSpawningAllowed) {
 
 		Slingshot slingshot = slingshot.particleSlingshot(myVar, myParam.myCamera);
+		const auto randFloat = []() -> float {
+			return static_cast<float>(rand()) / static_cast<float>(RAND_MAX);
+		};
 
 		if (myVar.isDragging && enablePathPrediction && myVar.gridExists) {
 			predictTrajectory(myParam.pParticles, myParam.myCamera, physics, myVar, slingshot);
@@ -123,37 +126,69 @@ void ParticlesSpawning::particlesInitialConditions(Physics& physics, UpdateVaria
 
 			// VISIBLE MATTER
 
-			for (int i = 0; i < static_cast<int>(40000 * particleAmountMultiplier); i++) {
+			const glm::vec2 galaxyCenter = myParam.myCamera.mouseWorldPos;
+			const float outerRadius = 200.0f;
+			const float scaleLength = 90.0f;
+			const int clusterCount = 40;
+			const float clusterRadiusMin = 6.0f;
+			const float clusterRadiusMax = 24.0f;
+			const float clusterBlend = 0.35f;
 
-				glm::vec2 galaxyCenter = myParam.myCamera.mouseWorldPos;
+			std::vector<glm::vec2> clusterCenters;
+			std::vector<float> clusterRadii;
+			clusterCenters.reserve(clusterCount);
+			clusterRadii.reserve(clusterCount);
 
-				float outerRadius = 200.0f;
-
-				float scaleLength = 90.0f;
-
-				float normalizedRand = static_cast<float>(rand()) / static_cast<float>(RAND_MAX);
-
-				float angle = static_cast<float>(rand()) / static_cast<float>(RAND_MAX) * 2 * PI;
-
+			for (int c = 0; c < clusterCount; ++c) {
+				float normalizedRand = randFloat();
+				float angle = randFloat() * 2.0f * PI;
 				float finalRadius = -scaleLength * log(1.0f - normalizedRand);
-
 				finalRadius = std::min(finalRadius, outerRadius + 600.0f);
-
 				finalRadius = std::max(finalRadius, 0.01f);
+				glm::vec2 center = glm::vec2(
+					galaxyCenter.x + finalRadius * cos(angle),
+					galaxyCenter.y + finalRadius * sin(angle)
+				);
+				clusterCenters.push_back(center);
+				clusterRadii.push_back(clusterRadiusMin + randFloat() * (clusterRadiusMax - clusterRadiusMin));
+			}
 
-				glm::vec2 pos = glm::vec2(galaxyCenter.x + finalRadius * cos(angle), galaxyCenter.y + finalRadius * sin(angle));
+			for (int i = 0; i < static_cast<int>(40000 * particleAmountMultiplier); i++) {
+				const float normalizedRand = randFloat();
+				const float angle = randFloat() * 2.0f * PI;
+				float diskRadius = -scaleLength * log(1.0f - normalizedRand);
+				diskRadius = std::min(diskRadius, outerRadius + 600.0f);
+				diskRadius = std::max(diskRadius, 0.01f);
+				const glm::vec2 basePos = glm::vec2(
+					galaxyCenter.x + diskRadius * cos(angle),
+					galaxyCenter.y + diskRadius * sin(angle)
+				);
 
-				glm::vec2 d = pos - galaxyCenter;
+				const int clusterIndex = rand() % clusterCount;
+				const float localAngle = randFloat() * 2.0f * PI;
+				const float localRadius = std::sqrt(randFloat()) * clusterRadii[clusterIndex];
+				const glm::vec2 localOffset = {
+					localRadius * cos(localAngle),
+					localRadius * sin(localAngle)
+				};
 
-				glm::vec2 tangent = glm::vec2(d.y, -d.x);
+				const glm::vec2 clusterPos = clusterCenters[clusterIndex] + localOffset;
+				glm::vec2 pos = basePos * (1.0f - clusterBlend) + clusterPos * clusterBlend;
 
-				float length = sqrt(tangent.x * tangent.x + tangent.y * tangent.y);
+				glm::vec2 dGlobal = pos - galaxyCenter;
+				float globalRadius = sqrt(dGlobal.x * dGlobal.x + dGlobal.y * dGlobal.y);
+				globalRadius = std::max(globalRadius, 0.01f);
+				glm::vec2 tangentGlobal = glm::vec2(dGlobal.y, -dGlobal.x) / globalRadius;
+				float globalSpeed = 10.5f * sqrt(1758.0f / (globalRadius + 54.7f));
 
-				tangent /= length;
+				glm::vec2 dLocal = pos - clusterCenters[clusterIndex];
+				float localOrbitRadius = sqrt(dLocal.x * dLocal.x + dLocal.y * dLocal.y);
+				localOrbitRadius = std::max(localOrbitRadius, 1.0f);
+				glm::vec2 tangentLocal = glm::vec2(dLocal.y, -dLocal.x) / localOrbitRadius;
+				float localSpeed = 4.5f * sqrt(200.0f / (localOrbitRadius + 12.0f));
+				localSpeed *= clusterBlend;
 
-				float speed = 10.5f * sqrt(1758.0f / (finalRadius + 54.7f));
-
-				glm::vec2 vel = tangent * speed;
+				glm::vec2 vel = tangentGlobal * globalSpeed + tangentLocal * localSpeed;
 
 				float finalMass = 0.0f;
 
@@ -250,36 +285,69 @@ void ParticlesSpawning::particlesInitialConditions(Physics& physics, UpdateVaria
 
 			// VISIBLE MATTER
 
-			for (int i = 0; i < static_cast<int>(12000 * particleAmountMultiplier); i++) {
-				glm::vec2 galaxyCenter = myParam.myCamera.mouseWorldPos;
+			const glm::vec2 galaxyCenter = myParam.myCamera.mouseWorldPos;
+			const float outerRadius = 100.0f;
+			const float scaleLength = 45.0f;
+			const int clusterCount = 20;
+			const float clusterRadiusMin = 5.0f;
+			const float clusterRadiusMax = 18.0f;
+			const float clusterBlend = 0.4f;
 
-				float outerRadius = 100.0f;
+			std::vector<glm::vec2> clusterCenters;
+			std::vector<float> clusterRadii;
+			clusterCenters.reserve(clusterCount);
+			clusterRadii.reserve(clusterCount);
 
-				float scaleLength = 45.0f;
-
-				float normalizedRand = static_cast<float>(rand()) / static_cast<float>(RAND_MAX);
-
-				float angle = static_cast<float>(rand()) / static_cast<float>(RAND_MAX) * 2 * PI;
-
+			for (int c = 0; c < clusterCount; ++c) {
+				float normalizedRand = randFloat();
+				float angle = randFloat() * 2.0f * PI;
 				float finalRadius = -scaleLength * log(1.0f - normalizedRand);
-
 				finalRadius = std::min(finalRadius, outerRadius + 300.0f);
-
 				finalRadius = std::max(finalRadius, 0.01f);
+				glm::vec2 center = glm::vec2(
+					galaxyCenter.x + finalRadius * cos(angle),
+					galaxyCenter.y + finalRadius * sin(angle)
+				);
+				clusterCenters.push_back(center);
+				clusterRadii.push_back(clusterRadiusMin + randFloat() * (clusterRadiusMax - clusterRadiusMin));
+			}
 
-				glm::vec2 pos = glm::vec2(galaxyCenter.x + finalRadius * cos(angle), galaxyCenter.y + finalRadius * sin(angle));
+			for (int i = 0; i < static_cast<int>(12000 * particleAmountMultiplier); i++) {
+				const float normalizedRand = randFloat();
+				const float angle = randFloat() * 2.0f * PI;
+				float diskRadius = -scaleLength * log(1.0f - normalizedRand);
+				diskRadius = std::min(diskRadius, outerRadius + 300.0f);
+				diskRadius = std::max(diskRadius, 0.01f);
+				const glm::vec2 basePos = glm::vec2(
+					galaxyCenter.x + diskRadius * cos(angle),
+					galaxyCenter.y + diskRadius * sin(angle)
+				);
 
-				glm::vec2 d = pos - galaxyCenter;
+				const int clusterIndex = rand() % clusterCount;
+				const float localAngle = randFloat() * 2.0f * PI;
+				const float localRadius = std::sqrt(randFloat()) * clusterRadii[clusterIndex];
+				const glm::vec2 localOffset = {
+					localRadius * cos(localAngle),
+					localRadius * sin(localAngle)
+				};
 
-				glm::vec2 tangent = glm::vec2(d.y, -d.x);
+				const glm::vec2 clusterPos = clusterCenters[clusterIndex] + localOffset;
+				glm::vec2 pos = basePos * (1.0f - clusterBlend) + clusterPos * clusterBlend;
 
-				float length = sqrt(tangent.x * tangent.x + tangent.y * tangent.y);
+				glm::vec2 dGlobal = pos - galaxyCenter;
+				float globalRadius = sqrt(dGlobal.x * dGlobal.x + dGlobal.y * dGlobal.y);
+				globalRadius = std::max(globalRadius, 0.01f);
+				glm::vec2 tangentGlobal = glm::vec2(dGlobal.y, -dGlobal.x) / globalRadius;
+				float globalSpeed = 10.5f * sqrt(505.0f / (globalRadius + 54.7f));
 
-				tangent /= length;
+				glm::vec2 dLocal = pos - clusterCenters[clusterIndex];
+				float localOrbitRadius = sqrt(dLocal.x * dLocal.x + dLocal.y * dLocal.y);
+				localOrbitRadius = std::max(localOrbitRadius, 1.0f);
+				glm::vec2 tangentLocal = glm::vec2(dLocal.y, -dLocal.x) / localOrbitRadius;
+				float localSpeed = 4.0f * sqrt(120.0f / (localOrbitRadius + 10.0f));
+				localSpeed *= clusterBlend;
 
-				float speed = 10.5f * sqrt(505.0f / (finalRadius + 54.7f));
-
-				glm::vec2 vel = tangent * speed;
+				glm::vec2 vel = tangentGlobal * globalSpeed + tangentLocal * localSpeed;
 
 				float finalMass = 0.0f;
 

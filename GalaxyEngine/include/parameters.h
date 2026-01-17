@@ -79,9 +79,9 @@ struct UpdateVariables{
 
 	double G = 6.674e-11;
 	float gravityMultiplier = 1.0f;
-	bool gravityRampEnabled = true;
-	float gravityRampStartMult = 0.1f;
-	float gravityRampSeconds = 20.0f;
+	bool gravityRampEnabled = false;
+	float gravityRampStartMult = 1.0f;
+	float gravityRampSeconds = 0.0f;
 	float gravityRampTime = 0.0f;
 	float softening = 2.5f;
 	float theta = 0.8f;
