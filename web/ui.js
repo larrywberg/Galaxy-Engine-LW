@@ -999,7 +999,8 @@ function App() {
   const [parametersCollapsed, setParametersCollapsed] = useState(storedState.parametersCollapsed ?? false);
   const [toolsCollapsed, setToolsCollapsed] = useState(storedState.toolsCollapsed ?? false);
   const [settingsCollapsed, setSettingsCollapsed] = useState(storedState.settingsCollapsed ?? true);
-  const [scenesCollapsed, setScenesCollapsed] = useState(storedState.scenesCollapsed ?? false);
+  const [scenesCollapsed, setScenesCollapsed] = useState(storedState.scenesCollapsed ?? true);
+  const [statsCollapsed, setStatsCollapsed] = useState(storedState.statsCollapsed ?? true);
   const [activeParamTab, setActiveParamTab] = useState(initialActiveTab);
   const [actionChoice, setActionChoice] = useState("");
   const hoverCount = useRef(0);
@@ -1145,6 +1146,7 @@ function App() {
     toolsCollapsed,
     settingsCollapsed,
     scenesCollapsed,
+    statsCollapsed,
     activeParamTab
   });
 
@@ -1686,6 +1688,9 @@ function App() {
     const scenesCollapsedValue = getBool("scenesCollapsed", scenesCollapsed);
     setScenesCollapsed(scenesCollapsedValue);
 
+    const statsCollapsedValue = getBool("statsCollapsed", statsCollapsed);
+    setStatsCollapsed(statsCollapsedValue);
+
     const activeTabValue = LEFT_TABS.includes(stored.activeParamTab)
       ? stored.activeParamTab
       : activeParamTab;
@@ -2198,9 +2203,22 @@ function App() {
     window.webSetWindowSize = (width, height) => {
       api.setWindowSize(width, height);
     };
-    if (window.webSyncCanvasSize) {
-      window.webSyncCanvasSize();
-    }
+    const syncCanvasSize = () => {
+      if (window.webSyncCanvasSize) {
+        window.webSyncCanvasSize();
+      }
+    };
+    const syncCameraToViewport = () => {
+      if (api?.rcCenterCamera) {
+        api.rcCenterCamera();
+      }
+    };
+    syncCanvasSize();
+    requestAnimationFrame(syncCanvasSize);
+    setTimeout(() => {
+      syncCanvasSize();
+      syncCameraToViewport();
+    }, 150);
   }, [api]);
 
   useEffect(() => {
@@ -2331,6 +2349,7 @@ function App() {
     toolsCollapsed,
     settingsCollapsed,
     scenesCollapsed,
+    statsCollapsed,
     activeParamTab
   ]);
 
@@ -4094,7 +4113,13 @@ function App() {
 
             ${showStats &&
             html`
-              <${Panel} title="STATS" onHover=${updateHover} style=${{ pointerEvents: "auto" }}>
+              <${Panel}
+                title="STATS"
+                onHover=${updateHover}
+                collapsed=${statsCollapsed}
+                onToggle=${() => setStatsCollapsed(!statsCollapsed)}
+                style=${{ pointerEvents: "auto" }}
+              >
                 <div style=${{ display: "flex", justifyContent: "space-between", marginBottom: 6 }}>
                   <span>FPS</span>
                   <span>${statsFps}</span>
@@ -4209,10 +4234,8 @@ function App() {
         </button>
         <button
           onClick=${() => {
-            if (timePlaying) return;
-            saveLocalScene();
+            api?.rcCenterCamera();
           }}
-          disabled=${timePlaying}
           style=${{
             display: "flex",
             alignItems: "center",
@@ -4220,45 +4243,16 @@ function App() {
             padding: "10px 16px",
             borderRadius: 999,
             border: "1px solid rgba(255,255,255,0.16)",
-            background: timePlaying ? "rgba(255,255,255,0.05)" : "rgba(74,222,128,0.18)",
+            background: "rgba(56,189,248,0.2)",
             color: "#e6edf3",
             letterSpacing: "0.08em",
             textTransform: "uppercase",
             fontSize: 12,
-            cursor: timePlaying ? "not-allowed" : "pointer",
-            opacity: timePlaying ? 0.5 : 1,
+            cursor: "pointer",
             boxShadow: "0 16px 30px rgba(0,0,0,0.35)"
           }}
         >
-          Save Scene
-        </button>
-        <button
-          onClick=${() => {
-            if (timePlaying) {
-              setTimePlaying(false);
-              api?.setTimePlaying(0);
-            }
-            loadSelectedScene();
-          }}
-          disabled=${!selectedSceneId}
-          style=${{
-            display: "flex",
-            alignItems: "center",
-            gap: 8,
-            padding: "10px 16px",
-            borderRadius: 999,
-            border: "1px solid rgba(255,255,255,0.16)",
-            background: !selectedSceneId ? "rgba(255,255,255,0.05)" : "rgba(251,191,36,0.2)",
-            color: "#e6edf3",
-            letterSpacing: "0.08em",
-            textTransform: "uppercase",
-            fontSize: 12,
-            cursor: !selectedSceneId ? "not-allowed" : "pointer",
-            opacity: !selectedSceneId ? 0.5 : 1,
-            boxShadow: "0 16px 30px rgba(0,0,0,0.35)"
-          }}
-        >
-          Load Scene
+          Center Camera
         </button>
         <button
           onClick=${() => {

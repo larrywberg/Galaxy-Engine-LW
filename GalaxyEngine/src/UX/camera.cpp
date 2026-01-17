@@ -181,19 +181,24 @@ void SceneCamera::cameraFollowObject(UpdateVariables& myVar, UpdateParameters& m
 			}
 		}
 
-		followPosition = sum / count;
-
-		followPosition = followPosition + panFollowingOffset;
-
-		camera.target = { followPosition.x, followPosition.y };
-
-		camera.offset = { GetScreenWidth() / 2.0f, GetScreenHeight() / 2.0f };
+		if (count > 0.0f) {
+			followPosition = sum / count;
+			followPosition = followPosition + panFollowingOffset;
+			camera.target = { followPosition.x, followPosition.y };
+			camera.offset = { GetScreenWidth() / 2.0f, GetScreenHeight() / 2.0f };
+		}
 
 		if (IO::shortcutPress(KEY_F) || count == 0 || myParam.pParticles.size() == 0) {
 			isFollowing = false;
 			camera.zoom = defaultCamZoom;
-			camera.target = { 0.0f, 0.0f };
-			camera.offset = { 0.0f, 0.0f };
+			if (myParam.pParticles.empty()) {
+				camera.target = { myVar.domainSize.x * 0.5f, myVar.domainSize.y * 0.5f };
+				camera.offset = { GetScreenWidth() / 2.0f, GetScreenHeight() / 2.0f };
+			}
+			else {
+				camera.target = { 0.0f, 0.0f };
+				camera.offset = { 0.0f, 0.0f };
+			}
 			panFollowingOffset = { 0.0f, 0.0f };
 		}
 	}
@@ -218,5 +223,4 @@ void SceneCamera::hasCamMoved() {
 	lastZoom = camera.zoom;
 	lastRotation = camera.rotation;
 }
-
 

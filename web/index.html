@@ -180,26 +180,39 @@
         }
       }
 
+      let resizePending = false;
+      function scheduleResize() {
+        if (resizePending) return;
+        resizePending = true;
+        requestAnimationFrame(() => {
+          resizePending = false;
+          resizeCanvas();
+        });
+      }
+
       function resizeCanvas() {
         const rect = glColumn.getBoundingClientRect();
-        const maxSize = 2000;
-        const targetRatio = 16 / 9;
-        let width = Math.max(rect.width, 1);
-        let height = Math.max(width / targetRatio, 1);
-        if (height > rect.height) {
-          height = Math.max(rect.height, 1);
-          width = Math.max(height * targetRatio, 1);
+        if (rect.width < 2 || rect.height < 2) {
+          scheduleResize();
+          return;
         }
-        const scale = Math.min(1, maxSize / Math.max(width, 1), maxSize / Math.max(height, 1));
-        width = Math.max(Math.floor(width * scale), 1);
-        height = Math.max(Math.floor(height * scale), 1);
+        const targetRatio = 19 / 13;
+        let width = Math.max(rect.width, 1);
+        let height = Math.max(rect.height, 1);
+        if (width / height > targetRatio) {
+          width = height * targetRatio;
+        } else {
+          height = width / targetRatio;
+        }
+        width = Math.max(Math.floor(width), 1);
+        height = Math.max(Math.floor(height), 1);
         app.style.width = `${window.innerWidth}px`;
         app.style.height = `${window.innerHeight}px`;
         if (canvas.parentElement !== glColumn) {
           glColumn.appendChild(canvas);
         }
-        canvas.style.left = `${(rect.width - width) * 0.5}px`;
-        canvas.style.top = `${(rect.height - height) * 0.5}px`;
+        canvas.style.left = `${Math.max(0, (rect.width - width) * 0.5)}px`;
+        canvas.style.top = `${Math.max(0, (rect.height - height) * 0.5)}px`;
         canvas.style.width = `${width}px`;
         canvas.style.height = `${height}px`;
         canvas.width = width;
@@ -209,13 +222,13 @@
         }
       }
 
-      resizeCanvas();
-      window.addEventListener("resize", resizeCanvas);
+      scheduleResize();
+      window.addEventListener("resize", scheduleResize);
       if ("ResizeObserver" in window) {
-        const resizeObserver = new ResizeObserver(() => resizeCanvas());
+        const resizeObserver = new ResizeObserver(() => scheduleResize());
         resizeObserver.observe(glColumn);
       }
-      window.webSyncCanvasSize = resizeCanvas;
+      window.webSyncCanvasSize = scheduleResize;
 
       window.Module = {
         canvas,
