@@ -8,15 +8,24 @@ int main(int argc, char** argv) {
 	// SPH Materials initialization
 	SPHMaterials::Init();
 
+	SetTraceLogLevel(LOG_WARNING);
+
 	SetConfigFlags(FLAG_MSAA_4X_HINT);
 
 	SetConfigFlags(FLAG_WINDOW_RESIZABLE);
 
 	SetConfigFlags(FLAG_WINDOW_ALWAYS_RUN);
 
-	int threadsAvailable = std::thread::hardware_concurrency();
+	int threadsAvailable = static_cast<int>(std::thread::hardware_concurrency());
+	if (threadsAvailable <= 0) {
+		threadsAvailable = 1;
+	}
 
-	myVar.threadsAmount = static_cast<int>(threadsAvailable * 0.5f);
+#if defined(EMSCRIPTEN)
+	myVar.threadsAmount = 4;
+#else
+	myVar.threadsAmount = std::max(1, static_cast<int>(threadsAvailable * 0.5f));
+#endif
 
 	std::cout << "Threads available: " << threadsAvailable << std::endl;
 	std::cout << "Thread amount set to: " << myVar.threadsAmount << std::endl;

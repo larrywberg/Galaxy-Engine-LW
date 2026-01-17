@@ -79,6 +79,10 @@ struct UpdateVariables{
 
 	double G = 6.674e-11;
 	float gravityMultiplier = 1.0f;
+	bool gravityRampEnabled = true;
+	float gravityRampStartMult = 0.1f;
+	float gravityRampSeconds = 20.0f;
+	float gravityRampTime = 0.0f;
 	float softening = 2.5f;
 	float theta = 0.8f;
 	float timeStepMultiplier = 1.0f;
@@ -98,6 +102,8 @@ struct UpdateVariables{
 	bool isTimePlaying = true;
 
 	float timeFactor = 1.0f;
+	bool velocityDampingEnabled = true;
+	float velocityDampingPerSecond = 0.01f;
 
 	bool isGlobalTrailsEnabled = false;
 	bool isSelectedTrailsEnabled = false;
@@ -178,7 +184,7 @@ struct UpdateVariables{
 
 	glm::vec2 mouseWorldPos = { 0.0f, 0.0f };
 
-	int threadsAmount = 1;
+	int threadsAmount = 4;
 	ImFont* robotoMediumFont = nullptr;
 
 	bool pauseAfterRecording = true;

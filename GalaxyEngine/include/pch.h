@@ -30,8 +30,17 @@
 #include <cstdio>
 
 // Runtime
-#if !defined(EMSCRIPTEN)
+#if defined(_OPENMP)
+#if __has_include(<omp.h>)
 #include <omp.h>
+#elif defined(EMSCRIPTEN)
+extern "C" {
+void omp_set_num_threads(int);
+int omp_get_max_threads(void);
+}
+#else
+#error "OpenMP requested but <omp.h> not found."
+#endif
 #endif
 
 // Vendor

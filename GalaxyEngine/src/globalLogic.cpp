@@ -1,4 +1,5 @@
 #include "globalLogic.h"
+#include "UX/parallel_for.h"
 
 UpdateParameters myParam;
 UpdateVariables myVar;
@@ -1015,8 +1016,6 @@ void updateScene() {
 		field.initializeCells(myVar);
 	}
 
-	myVar.G = 6.674e-11 * myVar.gravityMultiplier;
-
 	if (IO::shortcutPress(KEY_SPACE)) {
 		myVar.isTimePlaying = !myVar.isTimePlaying;
 	}
@@ -1046,6 +1045,29 @@ void updateScene() {
 	myVar.halfDomainHeight = myVar.domainSize.y * 0.5f;
 
 	myVar.timeFactor = myVar.fixedDeltaTime * myVar.timeStepMultiplier * static_cast<float>(myVar.isTimePlaying);
+	if (myVar.gravityRampEnabled) {
+		if (myVar.timeFactor > 0.0f) {
+			myVar.gravityRampTime += myVar.timeFactor;
+		}
+
+		if (myVar.gravityRampSeconds > 0.0f) {
+			myVar.gravityRampTime = std::min(myVar.gravityRampTime, myVar.gravityRampSeconds);
+		}
+	}
+	else {
+		myVar.gravityRampTime = 0.0f;
+	}
+
+	float gravityMultiplier = myVar.gravityMultiplier;
+	if (myVar.gravityRampEnabled) {
+		float rampT = 1.0f;
+		if (myVar.gravityRampSeconds > 0.0f) {
+			rampT = std::clamp(myVar.gravityRampTime / myVar.gravityRampSeconds, 0.0f, 1.0f);
+		}
+		gravityMultiplier = myVar.gravityRampStartMult
+			+ (myVar.gravityMultiplier - myVar.gravityRampStartMult) * rampT;
+	}
+	myVar.G = 6.674e-11 * gravityMultiplier;
 
 	if (myVar.drawQuadtree) {
 		for (uint32_t i = 0; i < globalNodes.size(); i++) {
@@ -1133,17 +1155,25 @@ void updateScene() {
 					+ 0.5f * myParam.pParticles[i].prevAcc * myVar.timeFactor * myVar.timeFactor;
 			}*/
 
+#if defined(EMSCRIPTEN)
+			const size_t count = myParam.pParticles.size();
+			const int thread_count = clamp_thread_count(count, myVar.isMultiThreadingEnabled ? myVar.threadsAmount : 1);
+			auto gravity_task = [&](size_t i, int) {
+				if (!((myParam.rParticles[i].isBeingDrawn && myVar.isBrushDrawing && myVar.isSPHEnabled) || myParam.rParticles[i].isPinned)) {
+					glm::vec2 netForce = physics.calculateForceFromGrid(myParam.pParticles, myVar, myParam.pParticles[i]);
+					myParam.pParticles[i].acc = netForce / myParam.pParticles[i].mass;
+				}
+			};
+			parallel_for(0, count, thread_count, gravity_task);
+#else
 #pragma omp parallel for schedule(dynamic)
 			for (size_t i = 0; i < myParam.pParticles.size(); i++) {
-
-				if ((myParam.rParticles[i].isBeingDrawn && myVar.isBrushDrawing && myVar.isSPHEnabled) || myParam.rParticles[i].isPinned) {
-					continue;
+				if (!((myParam.rParticles[i].isBeingDrawn && myVar.isBrushDrawing && myVar.isSPHEnabled) || myParam.rParticles[i].isPinned)) {
+					glm::vec2 netForce = physics.calculateForceFromGrid(myParam.pParticles, myVar, myParam.pParticles[i]);
+					myParam.pParticles[i].acc = netForce / myParam.pParticles[i].mass;
 				}
-
-				glm::vec2 netForce = physics.calculateForceFromGrid(myParam.pParticles, myVar, myParam.pParticles[i]);
-
-				myParam.pParticles[i].acc = netForce / myParam.pParticles[i].mass;
 			}
+#endif
 
 			/*for (size_t i = 0; i < myParam.pParticles.size(); i++) {
 				for (size_t j = i + 1; j < myParam.pParticles.size(); j++) {
@@ -1675,12 +1705,12 @@ void loadConfig() {
 
 void enableMultiThreading() {
 	if (myVar.isMultiThreadingEnabled) {
-		#if !defined(EMSCRIPTEN)
-		omp_set_num_threads(myVar.threadsAmount);
+		#if defined(_OPENMP)
+		omp_set_num_threads(std::max(1, myVar.threadsAmount));
 		#endif
 	}
 	else {
-		#if !defined(EMSCRIPTEN)
+		#if defined(_OPENMP)
 		omp_set_num_threads(1);
 		#endif
 	}

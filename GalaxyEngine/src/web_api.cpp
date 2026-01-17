@@ -2,8 +2,11 @@
 #include "parameters.h"
 
 #include <cstdint>
+#include <algorithm>
+#include <cmath>
 #include <filesystem>
 #include <fstream>
+#include <iostream>
 #include <sstream>
 #include <string>
 #include <vector>
@@ -38,7 +41,37 @@ static uint32_t packColor(const Color& color) {
 static std::vector<uint8_t> g_sceneBuffer;
 static std::string g_sceneJson;
 
+struct SceneSnapshot {
+	bool valid = false;
+	float softening = 0.0f;
+	float gravity = 0.0f;
+	float theta = 0.0f;
+	float timeStep = 0.0f;
+	float timeFactor = 1.0f;
+	int gravityRampEnabled = 0;
+	float gravityRampStart = 0.0f;
+	float gravityRampSeconds = 0.0f;
+	int velocityDampingEnabled = 0;
+	float velocityDampingRate = 0.0f;
+	int darkMatterEnabled = 0;
+	int gravityFieldEnabled = 0;
+	float particleAmountMult = 0.0f;
+	float darkMatterAmountMult = 0.0f;
+	int massMultiplierEnabled = 0;
+	float cameraTargetX = 0.0f;
+	float cameraTargetY = 0.0f;
+	float cameraOffsetX = 0.0f;
+	float cameraOffsetY = 0.0f;
+	float cameraZoom = 0.0f;
+};
+
+static SceneSnapshot g_lastSavedSnapshot;
+
 static void appendVec2(std::ostringstream& out, const glm::vec2& value) {
+	out << "[" << value.x << "," << value.y << "]";
+}
+
+static void appendVec2(std::ostringstream& out, const Vector2& value) {
 	out << "[" << value.x << "," << value.y << "]";
 }
 
@@ -48,6 +81,13 @@ static void appendColor(std::ostringstream& out, const Color& value) {
 }
 
 static glm::vec2 readVec2(const YAML::Node& node) {
+	if (!node || !node.IsSequence() || node.size() < 2) {
+		return { 0.0f, 0.0f };
+	}
+	return { node[0].as<float>(), node[1].as<float>() };
+}
+
+static Vector2 readVector2(const YAML::Node& node) {
 	if (!node || !node.IsSequence() || node.size() < 2) {
 		return { 0.0f, 0.0f };
 	}
@@ -102,6 +142,453 @@ static std::string ensureSceneDir() {
 	return dir;
 }
 
+static void logSceneDiffLine(const std::string& message, const char* color) {
+#if defined(EMSCRIPTEN)
+	const char* safeColor = color ? color : "red";
+	EM_ASM({
+		const msg = UTF8ToString($0);
+		const color = UTF8ToString($1);
+		if (typeof console !== "undefined" && console.log) {
+			console.log("%c" + msg, "color:" + color + ";font-weight:bold;");
+		}
+	}, message.c_str(), safeColor);
+#else
+	std::cout << message << std::endl;
+#endif
+}
+
+static SceneSnapshot captureSceneSnapshot() {
+	SceneSnapshot snapshot;
+	snapshot.valid = true;
+	snapshot.softening = myVar.softening;
+	snapshot.gravity = myVar.gravityMultiplier;
+	snapshot.theta = myVar.theta;
+	snapshot.timeStep = myVar.timeStepMultiplier;
+	snapshot.timeFactor = myVar.timeFactor;
+	snapshot.gravityRampEnabled = myVar.gravityRampEnabled ? 1 : 0;
+	snapshot.gravityRampStart = myVar.gravityRampStartMult;
+	snapshot.gravityRampSeconds = myVar.gravityRampSeconds;
+	snapshot.velocityDampingEnabled = myVar.velocityDampingEnabled ? 1 : 0;
+	snapshot.velocityDampingRate = myVar.velocityDampingPerSecond;
+	snapshot.darkMatterEnabled = myVar.isDarkMatterEnabled ? 1 : 0;
+	snapshot.gravityFieldEnabled = myVar.isGravityFieldEnabled ? 1 : 0;
+	snapshot.particleAmountMult = myParam.particlesSpawning.particleAmountMultiplier;
+	snapshot.darkMatterAmountMult = myParam.particlesSpawning.DMAmountMultiplier;
+	snapshot.massMultiplierEnabled = myParam.particlesSpawning.massMultiplierEnabled ? 1 : 0;
+	snapshot.cameraTargetX = myParam.myCamera.camera.target.x;
+	snapshot.cameraTargetY = myParam.myCamera.camera.target.y;
+	snapshot.cameraOffsetX = myParam.myCamera.camera.offset.x;
+	snapshot.cameraOffsetY = myParam.myCamera.camera.offset.y;
+	snapshot.cameraZoom = myParam.myCamera.camera.zoom;
+	return snapshot;
+}
+
+static SceneSnapshot captureDefaultSnapshot() {
+	UpdateVariables defaultVar;
+	UpdateParameters defaultParam;
+	SceneSnapshot snapshot;
+	snapshot.valid = true;
+	snapshot.softening = defaultVar.softening;
+	snapshot.gravity = defaultVar.gravityMultiplier;
+	snapshot.theta = defaultVar.theta;
+	snapshot.timeStep = defaultVar.timeStepMultiplier;
+	snapshot.timeFactor = defaultVar.timeFactor;
+	snapshot.gravityRampEnabled = defaultVar.gravityRampEnabled ? 1 : 0;
+	snapshot.gravityRampStart = defaultVar.gravityRampStartMult;
+	snapshot.gravityRampSeconds = defaultVar.gravityRampSeconds;
+	snapshot.velocityDampingEnabled = defaultVar.velocityDampingEnabled ? 1 : 0;
+	snapshot.velocityDampingRate = defaultVar.velocityDampingPerSecond;
+	snapshot.darkMatterEnabled = defaultVar.isDarkMatterEnabled ? 1 : 0;
+	snapshot.gravityFieldEnabled = defaultVar.isGravityFieldEnabled ? 1 : 0;
+	snapshot.particleAmountMult = defaultParam.particlesSpawning.particleAmountMultiplier;
+	snapshot.darkMatterAmountMult = defaultParam.particlesSpawning.DMAmountMultiplier;
+	snapshot.massMultiplierEnabled = defaultParam.particlesSpawning.massMultiplierEnabled ? 1 : 0;
+	snapshot.cameraTargetX = defaultParam.myCamera.camera.target.x;
+	snapshot.cameraTargetY = defaultParam.myCamera.camera.target.y;
+	snapshot.cameraOffsetX = defaultParam.myCamera.camera.offset.x;
+	snapshot.cameraOffsetY = defaultParam.myCamera.camera.offset.y;
+	snapshot.cameraZoom = defaultParam.myCamera.camera.zoom;
+	return snapshot;
+}
+
+static void logSceneLoadSummary(const char* source) {
+	const char* label = source ? source : "unknown";
+	std::cout
+		<< "[SceneLoad][" << label << "]"
+		<< " softening=" << myVar.softening
+		<< " gravity=" << myVar.gravityMultiplier
+		<< " theta=" << myVar.theta
+		<< " timeStep=" << myVar.timeStepMultiplier
+		<< " timeFactor=" << myVar.timeFactor
+		<< " gravityRampEnabled=" << myVar.gravityRampEnabled
+		<< " gravityRampStart=" << myVar.gravityRampStartMult
+		<< " gravityRampSeconds=" << myVar.gravityRampSeconds
+		<< " velocityDampingEnabled=" << myVar.velocityDampingEnabled
+		<< " velocityDampingRate=" << myVar.velocityDampingPerSecond
+		<< " darkMatter=" << myVar.isDarkMatterEnabled
+		<< " gravityField=" << myVar.isGravityFieldEnabled
+		<< " particleAmountMult=" << myParam.particlesSpawning.particleAmountMultiplier
+		<< " darkMatterAmountMult=" << myParam.particlesSpawning.DMAmountMultiplier
+		<< " massMultiplier=" << myParam.particlesSpawning.massMultiplierEnabled
+		<< " cameraTarget=(" << myParam.myCamera.camera.target.x << "," << myParam.myCamera.camera.target.y << ")"
+		<< " cameraOffset=(" << myParam.myCamera.camera.offset.x << "," << myParam.myCamera.camera.offset.y << ")"
+		<< " cameraZoom=" << myParam.myCamera.camera.zoom
+		<< std::endl;
+}
+
+static void logSceneSaveSummary(const char* source) {
+	const char* label = source ? source : "unknown";
+	std::cout
+		<< "[SceneSave][" << label << "]"
+		<< " softening=" << myVar.softening
+		<< " gravity=" << myVar.gravityMultiplier
+		<< " theta=" << myVar.theta
+		<< " timeStep=" << myVar.timeStepMultiplier
+		<< " timeFactor=" << myVar.timeFactor
+		<< " gravityRampEnabled=" << myVar.gravityRampEnabled
+		<< " gravityRampStart=" << myVar.gravityRampStartMult
+		<< " gravityRampSeconds=" << myVar.gravityRampSeconds
+		<< " velocityDampingEnabled=" << myVar.velocityDampingEnabled
+		<< " velocityDampingRate=" << myVar.velocityDampingPerSecond
+		<< " darkMatter=" << myVar.isDarkMatterEnabled
+		<< " gravityField=" << myVar.isGravityFieldEnabled
+		<< " particleAmountMult=" << myParam.particlesSpawning.particleAmountMultiplier
+		<< " darkMatterAmountMult=" << myParam.particlesSpawning.DMAmountMultiplier
+		<< " massMultiplier=" << myParam.particlesSpawning.massMultiplierEnabled
+		<< " cameraTarget=(" << myParam.myCamera.camera.target.x << "," << myParam.myCamera.camera.target.y << ")"
+		<< " cameraOffset=(" << myParam.myCamera.camera.offset.x << "," << myParam.myCamera.camera.offset.y << ")"
+		<< " cameraZoom=" << myParam.myCamera.camera.zoom
+		<< std::endl;
+}
+
+static bool floatDiff(float a, float b, float tolerance = 1e-4f) {
+	return std::fabs(a - b) > tolerance;
+}
+
+static bool doubleDiff(double a, double b, double tolerance = 1e-9) {
+	return std::fabs(a - b) > tolerance;
+}
+
+static void resetCameraAfterLoad() {
+	myParam.myCamera.isFollowing = false;
+	myParam.myCamera.centerCamera = false;
+	myParam.myCamera.cameraChangedThisFrame = true;
+}
+
+static void compareWithLastSaved(const char* source) {
+	if (!g_lastSavedSnapshot.valid) {
+		const char* label = source ? source : "unknown";
+		const std::string message = "[SceneLoad][compare:" + std::string(label) + "] no saved snapshot available.";
+		logSceneDiffLine(message, "#d97706");
+		return;
+	}
+
+	const SceneSnapshot loaded = captureSceneSnapshot();
+	const char* label = source ? source : "unknown";
+	bool anyDiff = false;
+
+	auto logFloatDiff = [&](const char* name, float loadedValue, float savedValue) {
+		if (floatDiff(loadedValue, savedValue)) {
+			anyDiff = true;
+			std::ostringstream line;
+			line << "[SceneLoad][compare:" << label << "] " << name
+				<< " loaded=" << loadedValue << " saved=" << savedValue
+				<< " delta=" << (loadedValue - savedValue);
+			logSceneDiffLine(line.str(), "#dc2626");
+		}
+	};
+
+	auto logIntDiff = [&](const char* name, int loadedValue, int savedValue) {
+		if (loadedValue != savedValue) {
+			anyDiff = true;
+			std::ostringstream line;
+			line << "[SceneLoad][compare:" << label << "] " << name
+				<< " loaded=" << loadedValue << " saved=" << savedValue;
+			logSceneDiffLine(line.str(), "#dc2626");
+		}
+	};
+
+	logFloatDiff("softening", loaded.softening, g_lastSavedSnapshot.softening);
+	logFloatDiff("gravity", loaded.gravity, g_lastSavedSnapshot.gravity);
+	logFloatDiff("theta", loaded.theta, g_lastSavedSnapshot.theta);
+	logFloatDiff("timeStep", loaded.timeStep, g_lastSavedSnapshot.timeStep);
+	logFloatDiff("timeFactor", loaded.timeFactor, g_lastSavedSnapshot.timeFactor);
+	logIntDiff("gravityRampEnabled", loaded.gravityRampEnabled, g_lastSavedSnapshot.gravityRampEnabled);
+	logFloatDiff("gravityRampStart", loaded.gravityRampStart, g_lastSavedSnapshot.gravityRampStart);
+	logFloatDiff("gravityRampSeconds", loaded.gravityRampSeconds, g_lastSavedSnapshot.gravityRampSeconds);
+	logIntDiff("velocityDampingEnabled", loaded.velocityDampingEnabled, g_lastSavedSnapshot.velocityDampingEnabled);
+	logFloatDiff("velocityDampingRate", loaded.velocityDampingRate, g_lastSavedSnapshot.velocityDampingRate);
+	logIntDiff("darkMatter", loaded.darkMatterEnabled, g_lastSavedSnapshot.darkMatterEnabled);
+	logIntDiff("gravityField", loaded.gravityFieldEnabled, g_lastSavedSnapshot.gravityFieldEnabled);
+	logFloatDiff("particleAmountMult", loaded.particleAmountMult, g_lastSavedSnapshot.particleAmountMult);
+	logFloatDiff("darkMatterAmountMult", loaded.darkMatterAmountMult, g_lastSavedSnapshot.darkMatterAmountMult);
+	logIntDiff("massMultiplier", loaded.massMultiplierEnabled, g_lastSavedSnapshot.massMultiplierEnabled);
+	logFloatDiff("cameraTargetX", loaded.cameraTargetX, g_lastSavedSnapshot.cameraTargetX);
+	logFloatDiff("cameraTargetY", loaded.cameraTargetY, g_lastSavedSnapshot.cameraTargetY);
+	logFloatDiff("cameraOffsetX", loaded.cameraOffsetX, g_lastSavedSnapshot.cameraOffsetX);
+	logFloatDiff("cameraOffsetY", loaded.cameraOffsetY, g_lastSavedSnapshot.cameraOffsetY);
+	logFloatDiff("cameraZoom", loaded.cameraZoom, g_lastSavedSnapshot.cameraZoom);
+
+	if (!anyDiff) {
+		const std::string message = "[SceneLoad][compare:" + std::string(label) + "] no differences detected.";
+		logSceneDiffLine(message, "#16a34a");
+	} else {
+		const std::string message = "[SceneLoad][compare:" + std::string(label) + "] differences detected.";
+		logSceneDiffLine(message, "#dc2626");
+	}
+}
+
+static void compareWithDefaults(const char* source) {
+	const SceneSnapshot defaults = captureDefaultSnapshot();
+	const SceneSnapshot loaded = captureSceneSnapshot();
+	const char* label = source ? source : "unknown";
+	bool anyDiff = false;
+
+	auto logFloatDiff = [&](const char* name, float loadedValue, float defaultValue) {
+		if (floatDiff(loadedValue, defaultValue)) {
+			anyDiff = true;
+			std::ostringstream line;
+			line << "[SceneLoad][compare-defaults:" << label << "] " << name
+				<< " loaded=" << loadedValue << " default=" << defaultValue
+				<< " delta=" << (loadedValue - defaultValue);
+			logSceneDiffLine(line.str(), "#dc2626");
+		}
+	};
+
+	auto logIntDiff = [&](const char* name, int loadedValue, int defaultValue) {
+		if (loadedValue != defaultValue) {
+			anyDiff = true;
+			std::ostringstream line;
+			line << "[SceneLoad][compare-defaults:" << label << "] " << name
+				<< " loaded=" << loadedValue << " default=" << defaultValue;
+			logSceneDiffLine(line.str(), "#dc2626");
+		}
+	};
+
+	logFloatDiff("softening", loaded.softening, defaults.softening);
+	logFloatDiff("gravity", loaded.gravity, defaults.gravity);
+	logFloatDiff("theta", loaded.theta, defaults.theta);
+	logFloatDiff("timeStep", loaded.timeStep, defaults.timeStep);
+	logFloatDiff("timeFactor", loaded.timeFactor, defaults.timeFactor);
+	logIntDiff("gravityRampEnabled", loaded.gravityRampEnabled, defaults.gravityRampEnabled);
+	logFloatDiff("gravityRampStart", loaded.gravityRampStart, defaults.gravityRampStart);
+	logFloatDiff("gravityRampSeconds", loaded.gravityRampSeconds, defaults.gravityRampSeconds);
+	logIntDiff("velocityDampingEnabled", loaded.velocityDampingEnabled, defaults.velocityDampingEnabled);
+	logFloatDiff("velocityDampingRate", loaded.velocityDampingRate, defaults.velocityDampingRate);
+	logIntDiff("darkMatter", loaded.darkMatterEnabled, defaults.darkMatterEnabled);
+	logIntDiff("gravityField", loaded.gravityFieldEnabled, defaults.gravityFieldEnabled);
+	logFloatDiff("particleAmountMult", loaded.particleAmountMult, defaults.particleAmountMult);
+	logFloatDiff("darkMatterAmountMult", loaded.darkMatterAmountMult, defaults.darkMatterAmountMult);
+	logIntDiff("massMultiplier", loaded.massMultiplierEnabled, defaults.massMultiplierEnabled);
+	logFloatDiff("cameraTargetX", loaded.cameraTargetX, defaults.cameraTargetX);
+	logFloatDiff("cameraTargetY", loaded.cameraTargetY, defaults.cameraTargetY);
+	logFloatDiff("cameraOffsetX", loaded.cameraOffsetX, defaults.cameraOffsetX);
+	logFloatDiff("cameraOffsetY", loaded.cameraOffsetY, defaults.cameraOffsetY);
+	logFloatDiff("cameraZoom", loaded.cameraZoom, defaults.cameraZoom);
+
+	if (!anyDiff) {
+		const std::string message = "[SceneLoad][compare-defaults:" + std::string(label) + "] no differences detected.";
+		logSceneDiffLine(message, "#16a34a");
+	} else {
+		const std::string message = "[SceneLoad][compare-defaults:" + std::string(label) + "] differences detected.";
+		logSceneDiffLine(message, "#dc2626");
+	}
+}
+
+static void compareUpdateVariablesWithDefaults(const char* source) {
+	UpdateVariables defaults;
+	const UpdateVariables& loaded = myVar;
+	const char* label = source ? source : "unknown";
+	bool anyDiff = false;
+
+	auto logFloat = [&](const char* name, float loadedValue, float defaultValue) {
+		if (floatDiff(loadedValue, defaultValue)) {
+			anyDiff = true;
+			std::ostringstream line;
+			line << "[SceneLoad][compare-myVar:" << label << "] " << name
+				<< " loaded=" << loadedValue << " default=" << defaultValue
+				<< " delta=" << (loadedValue - defaultValue);
+			logSceneDiffLine(line.str(), "#dc2626");
+		}
+	};
+
+	auto logDouble = [&](const char* name, double loadedValue, double defaultValue) {
+		if (doubleDiff(loadedValue, defaultValue)) {
+			anyDiff = true;
+			std::ostringstream line;
+			line << "[SceneLoad][compare-myVar:" << label << "] " << name
+				<< " loaded=" << loadedValue << " default=" << defaultValue
+				<< " delta=" << (loadedValue - defaultValue);
+			logSceneDiffLine(line.str(), "#dc2626");
+		}
+	};
+
+	auto logInt = [&](const char* name, int loadedValue, int defaultValue) {
+		if (loadedValue != defaultValue) {
+			anyDiff = true;
+			std::ostringstream line;
+			line << "[SceneLoad][compare-myVar:" << label << "] " << name
+				<< " loaded=" << loadedValue << " default=" << defaultValue;
+			logSceneDiffLine(line.str(), "#dc2626");
+		}
+	};
+
+	auto logBool = [&](const char* name, bool loadedValue, bool defaultValue) {
+		if (loadedValue != defaultValue) {
+			anyDiff = true;
+			std::ostringstream line;
+			line << "[SceneLoad][compare-myVar:" << label << "] " << name
+				<< " loaded=" << (loadedValue ? 1 : 0) << " default=" << (defaultValue ? 1 : 0);
+			logSceneDiffLine(line.str(), "#dc2626");
+		}
+	};
+
+	auto logVec2 = [&](const char* name, const glm::vec2& loadedValue, const glm::vec2& defaultValue) {
+		if (floatDiff(loadedValue.x, defaultValue.x) || floatDiff(loadedValue.y, defaultValue.y)) {
+			anyDiff = true;
+			std::ostringstream line;
+			line << "[SceneLoad][compare-myVar:" << label << "] " << name
+				<< " loaded=(" << loadedValue.x << "," << loadedValue.y << ")"
+				<< " default=(" << defaultValue.x << "," << defaultValue.y << ")";
+			logSceneDiffLine(line.str(), "#dc2626");
+		}
+	};
+
+	logInt("screenWidth", loaded.screenWidth, defaults.screenWidth);
+	logInt("screenHeight", loaded.screenHeight, defaults.screenHeight);
+	logFloat("halfScreenWidth", loaded.halfScreenWidth, defaults.halfScreenWidth);
+	logFloat("halfScreenHeight", loaded.halfScreenHeight, defaults.halfScreenHeight);
+	logFloat("screenRatioX", loaded.screenRatioX, defaults.screenRatioX);
+	logFloat("screenRatioY", loaded.screenRatioY, defaults.screenRatioY);
+	logVec2("domainSize", loaded.domainSize, defaults.domainSize);
+	logFloat("halfDomainWidth", loaded.halfDomainWidth, defaults.halfDomainWidth);
+	logFloat("halfDomainHeight", loaded.halfDomainHeight, defaults.halfDomainHeight);
+	logBool("fullscreenState", loaded.fullscreenState, defaults.fullscreenState);
+	logBool("exitGame", loaded.exitGame, defaults.exitGame);
+	logInt("targetFPS", loaded.targetFPS, defaults.targetFPS);
+	logDouble("G", loaded.G, defaults.G);
+	logFloat("gravityMultiplier", loaded.gravityMultiplier, defaults.gravityMultiplier);
+	logBool("gravityRampEnabled", loaded.gravityRampEnabled, defaults.gravityRampEnabled);
+	logFloat("gravityRampStartMult", loaded.gravityRampStartMult, defaults.gravityRampStartMult);
+	logFloat("gravityRampSeconds", loaded.gravityRampSeconds, defaults.gravityRampSeconds);
+	logFloat("gravityRampTime", loaded.gravityRampTime, defaults.gravityRampTime);
+	logFloat("softening", loaded.softening, defaults.softening);
+	logFloat("theta", loaded.theta, defaults.theta);
+	logFloat("timeStepMultiplier", loaded.timeStepMultiplier, defaults.timeStepMultiplier);
+	logBool("useSymplecticIntegrator", loaded.useSymplecticIntegrator, defaults.useSymplecticIntegrator);
+	logFloat("sphMaxVel", loaded.sphMaxVel, defaults.sphMaxVel);
+	logFloat("globalHeatConductivity", loaded.globalHeatConductivity, defaults.globalHeatConductivity);
+	logFloat("globalAmbientHeatRate", loaded.globalAmbientHeatRate, defaults.globalAmbientHeatRate);
+	logFloat("ambientTemp", loaded.ambientTemp, defaults.ambientTemp);
+	logInt("maxLeafParticles", loaded.maxLeafParticles, defaults.maxLeafParticles);
+	logFloat("minLeafSize", loaded.minLeafSize, defaults.minLeafSize);
+	logFloat("fixedDeltaTime", loaded.fixedDeltaTime, defaults.fixedDeltaTime);
+	logBool("isTimePlaying", loaded.isTimePlaying, defaults.isTimePlaying);
+	logFloat("timeFactor", loaded.timeFactor, defaults.timeFactor);
+	logBool("velocityDampingEnabled", loaded.velocityDampingEnabled, defaults.velocityDampingEnabled);
+	logFloat("velocityDampingPerSecond", loaded.velocityDampingPerSecond, defaults.velocityDampingPerSecond);
+	logBool("isGlobalTrailsEnabled", loaded.isGlobalTrailsEnabled, defaults.isGlobalTrailsEnabled);
+	logBool("isSelectedTrailsEnabled", loaded.isSelectedTrailsEnabled, defaults.isSelectedTrailsEnabled);
+	logBool("isLocalTrailsEnabled", loaded.isLocalTrailsEnabled, defaults.isLocalTrailsEnabled);
+	logBool("isPeriodicBoundaryEnabled", loaded.isPeriodicBoundaryEnabled, defaults.isPeriodicBoundaryEnabled);
+	logBool("isMultiThreadingEnabled", loaded.isMultiThreadingEnabled, defaults.isMultiThreadingEnabled);
+	logBool("isBarnesHutEnabled", loaded.isBarnesHutEnabled, defaults.isBarnesHutEnabled);
+	logBool("isDarkMatterEnabled", loaded.isDarkMatterEnabled, defaults.isDarkMatterEnabled);
+	logBool("isDensitySizeEnabled", loaded.isDensitySizeEnabled, defaults.isDensitySizeEnabled);
+	logBool("isForceSizeEnabled", loaded.isForceSizeEnabled, defaults.isForceSizeEnabled);
+	logBool("isShipGasEnabled", loaded.isShipGasEnabled, defaults.isShipGasEnabled);
+	logBool("isSPHEnabled", loaded.isSPHEnabled, defaults.isSPHEnabled);
+	logBool("sphGround", loaded.sphGround, defaults.sphGround);
+	logBool("isTempEnabled", loaded.isTempEnabled, defaults.isTempEnabled);
+	logBool("constraintsEnabled", loaded.constraintsEnabled, defaults.constraintsEnabled);
+	logBool("isOpticsEnabled", loaded.isOpticsEnabled, defaults.isOpticsEnabled);
+	logBool("isGPUEnabled", loaded.isGPUEnabled, defaults.isGPUEnabled);
+	logBool("isMergerEnabled", loaded.isMergerEnabled, defaults.isMergerEnabled);
+	logBool("longExposureFlag", loaded.longExposureFlag, defaults.longExposureFlag);
+	logInt("longExposureDuration", loaded.longExposureDuration, defaults.longExposureDuration);
+	logInt("longExposureCurrent", loaded.longExposureCurrent, defaults.longExposureCurrent);
+	logBool("isSpawningAllowed", loaded.isSpawningAllowed, defaults.isSpawningAllowed);
+	logFloat("particleTextureHalfSize", loaded.particleTextureHalfSize, defaults.particleTextureHalfSize);
+	logInt("trailMaxLength", loaded.trailMaxLength, defaults.trailMaxLength);
+	logBool("isRecording", loaded.isRecording, defaults.isRecording);
+	logFloat("particleSizeMultiplier", loaded.particleSizeMultiplier, defaults.particleSizeMultiplier);
+	logBool("isDragging", loaded.isDragging, defaults.isDragging);
+	logBool("isMouseNotHoveringUI", loaded.isMouseNotHoveringUI, defaults.isMouseNotHoveringUI);
+	logBool("drawQuadtree", loaded.drawQuadtree, defaults.drawQuadtree);
+	logBool("drawZCurves", loaded.drawZCurves, defaults.drawZCurves);
+	logBool("isGlowEnabled", loaded.isGlowEnabled, defaults.isGlowEnabled);
+	logVec2("mouseWorldPos", loaded.mouseWorldPos, defaults.mouseWorldPos);
+	logInt("threadsAmount", loaded.threadsAmount, defaults.threadsAmount);
+	logBool("pauseAfterRecording", loaded.pauseAfterRecording, defaults.pauseAfterRecording);
+	logBool("cleanSceneAfterRecording", loaded.cleanSceneAfterRecording, defaults.cleanSceneAfterRecording);
+	logFloat("recordingTimeLimit", loaded.recordingTimeLimit, defaults.recordingTimeLimit);
+	logFloat("globalConstraintStiffnessMult", loaded.globalConstraintStiffnessMult, defaults.globalConstraintStiffnessMult);
+	logFloat("globalConstraintResistance", loaded.globalConstraintResistance, defaults.globalConstraintResistance);
+	logBool("constraintAllSolids", loaded.constraintAllSolids, defaults.constraintAllSolids);
+	logBool("constraintSelected", loaded.constraintSelected, defaults.constraintSelected);
+	logBool("deleteAllConstraints", loaded.deleteAllConstraints, defaults.deleteAllConstraints);
+	logBool("deleteSelectedConstraints", loaded.deleteSelectedConstraints, defaults.deleteSelectedConstraints);
+	logBool("drawConstraints", loaded.drawConstraints, defaults.drawConstraints);
+	logBool("visualizeMesh", loaded.visualizeMesh, defaults.visualizeMesh);
+	logBool("unbreakableConstraints", loaded.unbreakableConstraints, defaults.unbreakableConstraints);
+	logBool("constraintStressColor", loaded.constraintStressColor, defaults.constraintStressColor);
+	logBool("constraintAfterDrawingFlag", loaded.constraintAfterDrawingFlag, defaults.constraintAfterDrawingFlag);
+	logBool("constraintAfterDrawing", loaded.constraintAfterDrawing, defaults.constraintAfterDrawing);
+	logFloat("constraintMaxStressColor", loaded.constraintMaxStressColor, defaults.constraintMaxStressColor);
+	logBool("pinFlag", loaded.pinFlag, defaults.pinFlag);
+	logBool("unPinFlag", loaded.unPinFlag, defaults.unPinFlag);
+	logBool("isBrushDrawing", loaded.isBrushDrawing, defaults.isBrushDrawing);
+	logBool("autoPausedForBrush", loaded.autoPausedForBrush, defaults.autoPausedForBrush);
+	logBool("wasTimePlayingBeforeBrush", loaded.wasTimePlayingBeforeBrush, defaults.wasTimePlayingBeforeBrush);
+	logBool("showBrushCursor", loaded.showBrushCursor, defaults.showBrushCursor);
+	logInt("introFontSize", loaded.introFontSize, defaults.introFontSize);
+	logBool("gridExists", loaded.gridExists, defaults.gridExists);
+	logBool("loadDropDownMenus", loaded.loadDropDownMenus, defaults.loadDropDownMenus);
+	logBool("exportPlyFlag", loaded.exportPlyFlag, defaults.exportPlyFlag);
+	logBool("exportPlySeqFlag", loaded.exportPlySeqFlag, defaults.exportPlySeqFlag);
+	logInt("plyFrameNumber", loaded.plyFrameNumber, defaults.plyFrameNumber);
+	logBool("toolSpawnHeavyParticle", loaded.toolSpawnHeavyParticle, defaults.toolSpawnHeavyParticle);
+	logBool("toolDrawParticles", loaded.toolDrawParticles, defaults.toolDrawParticles);
+	logBool("toolSpawnSmallGalaxy", loaded.toolSpawnSmallGalaxy, defaults.toolSpawnSmallGalaxy);
+	logBool("toolSpawnBigGalaxy", loaded.toolSpawnBigGalaxy, defaults.toolSpawnBigGalaxy);
+	logBool("toolSpawnStar", loaded.toolSpawnStar, defaults.toolSpawnStar);
+	logBool("toolSpawnBigBang", loaded.toolSpawnBigBang, defaults.toolSpawnBigBang);
+	logBool("toolErase", loaded.toolErase, defaults.toolErase);
+	logBool("toolRadialForce", loaded.toolRadialForce, defaults.toolRadialForce);
+	logBool("toolSpin", loaded.toolSpin, defaults.toolSpin);
+	logBool("toolMove", loaded.toolMove, defaults.toolMove);
+	logBool("toolRaiseTemp", loaded.toolRaiseTemp, defaults.toolRaiseTemp);
+	logBool("toolLowerTemp", loaded.toolLowerTemp, defaults.toolLowerTemp);
+	logBool("toolPointLight", loaded.toolPointLight, defaults.toolPointLight);
+	logBool("toolAreaLight", loaded.toolAreaLight, defaults.toolAreaLight);
+	logBool("toolConeLight", loaded.toolConeLight, defaults.toolConeLight);
+	logBool("toolCircle", loaded.toolCircle, defaults.toolCircle);
+	logBool("toolDrawShape", loaded.toolDrawShape, defaults.toolDrawShape);
+	logBool("toolLens", loaded.toolLens, defaults.toolLens);
+	logBool("toolWall", loaded.toolWall, defaults.toolWall);
+	logBool("toolMoveOptics", loaded.toolMoveOptics, defaults.toolMoveOptics);
+	logBool("toolEraseOptics", loaded.toolEraseOptics, defaults.toolEraseOptics);
+	logBool("toolSelectOptics", loaded.toolSelectOptics, defaults.toolSelectOptics);
+	logBool("isGravityFieldEnabled", loaded.isGravityFieldEnabled, defaults.isGravityFieldEnabled);
+	logBool("gravityFieldDMParticles", loaded.gravityFieldDMParticles, defaults.gravityFieldDMParticles);
+
+	if (!anyDiff) {
+		const std::string message = "[SceneLoad][compare-myVar:" + std::string(label) + "] no differences detected.";
+		logSceneDiffLine(message, "#16a34a");
+	} else {
+		const std::string message = "[SceneLoad][compare-myVar:" + std::string(label) + "] differences detected.";
+		logSceneDiffLine(message, "#dc2626");
+	}
+}
+
+static void notifyWebUiSync() {
+	EM_ASM({
+		if (typeof window !== "undefined" && window.webUiSyncFromEngine) {
+			window.webUiSyncFromEngine();
+		}
+	});
+}
+
 extern "C" {
 
 EMSCRIPTEN_KEEPALIVE void web_set_time_playing(int playing) {
@@ -138,6 +625,72 @@ EMSCRIPTEN_KEEPALIVE void web_set_gravity_multiplier(float mult) {
 
 EMSCRIPTEN_KEEPALIVE float web_get_gravity_multiplier() {
 	return myVar.gravityMultiplier;
+}
+
+EMSCRIPTEN_KEEPALIVE void web_set_gravity_ramp_enabled(int enabled) {
+	myVar.gravityRampEnabled = (enabled != 0);
+	if (myVar.gravityRampEnabled) {
+		myVar.gravityRampTime = 0.0f;
+	}
+}
+
+EMSCRIPTEN_KEEPALIVE int web_get_gravity_ramp_enabled() {
+	return myVar.gravityRampEnabled ? 1 : 0;
+}
+
+EMSCRIPTEN_KEEPALIVE void web_set_gravity_ramp_start_mult(float mult) {
+	myVar.gravityRampStartMult = mult;
+}
+
+EMSCRIPTEN_KEEPALIVE float web_get_gravity_ramp_start_mult() {
+	return myVar.gravityRampStartMult;
+}
+
+EMSCRIPTEN_KEEPALIVE void web_set_gravity_ramp_seconds(float seconds) {
+	if (seconds < 0.0f) {
+		seconds = 0.0f;
+	}
+	myVar.gravityRampSeconds = seconds;
+	if (myVar.gravityRampSeconds > 0.0f) {
+		myVar.gravityRampTime = std::min(myVar.gravityRampTime, myVar.gravityRampSeconds);
+	}
+}
+
+EMSCRIPTEN_KEEPALIVE float web_get_gravity_ramp_seconds() {
+	return myVar.gravityRampSeconds;
+}
+
+EMSCRIPTEN_KEEPALIVE void web_set_gravity_ramp_time(float time) {
+	if (time < 0.0f) {
+		time = 0.0f;
+	}
+	if (myVar.gravityRampSeconds > 0.0f) {
+		time = std::min(time, myVar.gravityRampSeconds);
+	}
+	myVar.gravityRampTime = time;
+}
+
+EMSCRIPTEN_KEEPALIVE float web_get_gravity_ramp_time() {
+	return myVar.gravityRampTime;
+}
+
+EMSCRIPTEN_KEEPALIVE void web_set_velocity_damping_enabled(int enabled) {
+	myVar.velocityDampingEnabled = (enabled != 0);
+}
+
+EMSCRIPTEN_KEEPALIVE int web_get_velocity_damping_enabled() {
+	return myVar.velocityDampingEnabled ? 1 : 0;
+}
+
+EMSCRIPTEN_KEEPALIVE void web_set_velocity_damping_rate(float rate) {
+	if (rate < 0.0f) {
+		rate = 0.0f;
+	}
+	myVar.velocityDampingPerSecond = rate;
+}
+
+EMSCRIPTEN_KEEPALIVE float web_get_velocity_damping_rate() {
+	return myVar.velocityDampingPerSecond;
 }
 
 EMSCRIPTEN_KEEPALIVE void web_set_time_step_multiplier(float mult) {
@@ -229,6 +782,9 @@ EMSCRIPTEN_KEEPALIVE int web_save_scene(const char* path) {
 		return 0;
 	}
 
+	logSceneSaveSummary("file");
+	g_lastSavedSnapshot = captureSceneSnapshot();
+
 	save.saveFlag = true;
 	save.saveSystem(path, myVar, myParam, sph, physics, lighting, field);
 	save.saveFlag = false;
@@ -253,6 +809,12 @@ EMSCRIPTEN_KEEPALIVE int web_load_scene(const char* path) {
 	save.loadFlag = true;
 	save.saveSystem(path, myVar, myParam, sph, physics, lighting, field);
 	save.loadFlag = false;
+	resetCameraAfterLoad();
+	logSceneLoadSummary("file");
+	compareWithLastSaved("file");
+	compareWithDefaults("file");
+	compareUpdateVariablesWithDefaults("file");
+	notifyWebUiSync();
 	return 1;
 }
 
@@ -261,6 +823,9 @@ EMSCRIPTEN_KEEPALIVE int web_save_scene_to_buffer() {
 	save.loadFlag = false;
 	const std::string dir = ensureSceneDir();
 	const std::string path = dir + "/scene.bin";
+
+	logSceneSaveSummary("buffer");
+	g_lastSavedSnapshot = captureSceneSnapshot();
 
 	save.saveFlag = true;
 	save.saveSystem(path, myVar, myParam, sph, physics, lighting, field);
@@ -283,6 +848,11 @@ EMSCRIPTEN_KEEPALIVE int web_save_scene_to_buffer() {
 	file.close();
 	std::filesystem::remove(path);
 	return static_cast<int>(g_sceneBuffer.size());
+}
+
+EMSCRIPTEN_KEEPALIVE void web_capture_scene_snapshot() {
+	logSceneSaveSummary("ui");
+	g_lastSavedSnapshot = captureSceneSnapshot();
 }
 
 EMSCRIPTEN_KEEPALIVE uint8_t* web_get_scene_buffer_ptr() {
@@ -310,12 +880,26 @@ EMSCRIPTEN_KEEPALIVE int web_load_scene_from_buffer(const uint8_t* data, int siz
 	save.saveSystem(path, myVar, myParam, sph, physics, lighting, field);
 	save.loadFlag = false;
 	std::filesystem::remove(path);
+	resetCameraAfterLoad();
+	logSceneLoadSummary("buffer");
+	compareWithLastSaved("buffer");
+	compareWithDefaults("buffer");
+	compareUpdateVariablesWithDefaults("buffer");
+	notifyWebUiSync();
 	return 1;
 }
 
 EMSCRIPTEN_KEEPALIVE int web_build_scene_json() {
 	std::ostringstream out;
 	out << "{\"version\":1,";
+	out << "\"camera\":{";
+	out << "\"target\":";
+	appendVec2(out, myParam.myCamera.camera.target);
+	out << ",\"offset\":";
+	appendVec2(out, myParam.myCamera.camera.offset);
+	out << ",\"zoom\":" << myParam.myCamera.camera.zoom;
+	out << ",\"rotation\":" << myParam.myCamera.camera.rotation;
+	out << "},";
 
 	out << "\"walls\":[";
 	bool first = true;
@@ -551,6 +1135,26 @@ EMSCRIPTEN_KEEPALIVE int web_load_scene_json(const char* json) {
 		return 0;
 	}
 
+	const YAML::Node cameraNode = root["camera"];
+	if (cameraNode) {
+		const YAML::Node targetNode = cameraNode["target"];
+		if (targetNode && targetNode.IsSequence()) {
+			myParam.myCamera.camera.target = readVector2(targetNode);
+		}
+		const YAML::Node offsetNode = cameraNode["offset"];
+		if (offsetNode && offsetNode.IsSequence()) {
+			myParam.myCamera.camera.offset = readVector2(offsetNode);
+		}
+		const YAML::Node zoomNode = cameraNode["zoom"];
+		if (zoomNode) {
+			myParam.myCamera.camera.zoom = zoomNode.as<float>(myParam.myCamera.camera.zoom);
+		}
+		const YAML::Node rotationNode = cameraNode["rotation"];
+		if (rotationNode) {
+			myParam.myCamera.camera.rotation = rotationNode.as<float>(myParam.myCamera.camera.rotation);
+		}
+	}
+
 	lighting.walls.clear();
 	lighting.shapes.clear();
 	lighting.pointLights.clear();
@@ -772,6 +1376,11 @@ EMSCRIPTEN_KEEPALIVE int web_load_scene_json(const char* json) {
 	}
 
 	lighting.shouldRender = true;
+	resetCameraAfterLoad();
+	logSceneLoadSummary("json");
+	compareWithLastSaved("json");
+	compareWithDefaults("json");
+	compareUpdateVariablesWithDefaults("json");
 	return 1;
 }
 
@@ -1153,9 +1762,15 @@ EMSCRIPTEN_KEEPALIVE void web_set_threads_amount(int threads) {
 	if (threads < 1) {
 		threads = 1;
 	}
+#if defined(EMSCRIPTEN)
+	if (threads > 4) {
+		threads = 4;
+	}
+#else
 	if (threads > 32) {
 		threads = 32;
 	}
+#endif
 	myVar.threadsAmount = threads;
 }
 

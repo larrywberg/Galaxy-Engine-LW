@@ -13,6 +13,8 @@ struct GridCell {
 
 class SPH {
 public:
+	static constexpr size_t kInvalidCell = std::numeric_limits<size_t>::max();
+
 	float radiusMultiplier = 3.0f;
 	float mass = 0.03f;
 	float stiffMultiplier = 1.0f;
@@ -29,6 +31,7 @@ public:
 
 	float cellSize;
 	std::unordered_map<size_t, GridCell> grid;
+	std::vector<glm::vec2> sphForce;
 
 	SPH() : cellSize(radiusMultiplier) {}
 
@@ -68,14 +71,21 @@ public:
 		return cellX * cellAmountX + cellY;
 	}
 
-	std::vector<size_t> getNeighborCells(size_t cellIndex) const {
-		std::vector<size_t> neighbors;
-		size_t cellX = cellIndex / cellAmountX;
-		size_t cellY = cellIndex % cellAmountX;
+	std::array<size_t, 9> getNeighborCells(size_t cellIndex) const {
+		std::array<size_t, 9> neighbors{};
+		int cellX = static_cast<int>(cellIndex / cellAmountX);
+		int cellY = static_cast<int>(cellIndex % cellAmountX);
+		size_t n = 0;
 
 		for (int i = -1; i <= 1; i++) {
 			for (int j = -1; j <= 1; j++) {
-				neighbors.push_back((cellX + i) * cellAmountX + (cellY + j));
+				int nx = cellX + i;
+				int ny = cellY + j;
+				if (nx < 0 || ny < 0) {
+					neighbors[n++] = kInvalidCell;
+					continue;
+				}
+				neighbors[n++] = static_cast<size_t>(nx) * cellAmountX + static_cast<size_t>(ny);
 			}
 		}
 
@@ -84,6 +94,7 @@ public:
 
 	void updateGrid(const std::vector<ParticlePhysics>& pParticles, const std::vector<ParticleRendering>& rParticles) {
 		grid.clear();
+		grid.reserve(pParticles.size());
 
 		for (size_t i = 0; i < pParticles.size(); i++) {
 

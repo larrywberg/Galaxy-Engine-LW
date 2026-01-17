@@ -11,7 +11,7 @@ const buildFolder = isRelease ? "wasm-release" : "wasm-debug";
 const rootDir = path.resolve(__dirname, "..", "build", buildFolder);
 const uiDir = path.resolve(__dirname, "..", "web");
 const port = Number(process.env.PORT || 8080);
-const cacheDays = Number(process.env.GALAXYENGINE_CACHE_DAYS || 3);
+const cacheDays = Number(process.env.GALAXYENGINE_CACHE_DAYS || 0);
 const cacheSeconds = Math.max(0, Math.floor(cacheDays * 24 * 60 * 60));
 
 const mimeTypes = {
@@ -52,7 +52,7 @@ function setCrossOriginHeaders(res) {
 
 function setCacheHeaders(res, ext) {
   if (ext === ".html" || cacheSeconds <= 0) {
-    res.setHeader("Cache-Control", "no-cache");
+    res.setHeader("Cache-Control", "no-store, no-cache, must-revalidate, max-age=0");
     return;
   }
   if (cacheableExtensions.has(ext)) {

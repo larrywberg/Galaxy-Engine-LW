@@ -1,4 +1,7 @@
 #include "Physics/SPH.h"
+#include "UX/parallel_for.h"
+
+extern UpdateVariables myVar;
 
 void SPH::computeViscCohesionForces(std::vector<ParticlePhysics>& pParticles, std::vector<ParticleRendering>& rParticles,
 	std::vector<glm::vec2>& sphForce, size_t& N) {
@@ -6,8 +9,12 @@ void SPH::computeViscCohesionForces(std::vector<ParticlePhysics>& pParticles, st
 	const float h = radiusMultiplier;
 	const float h2 = h * h;
 
+#if defined(EMSCRIPTEN)
+	for (size_t i = 0; i < N; ++i) {
+#else
 #pragma omp parallel for
 	for (size_t i = 0; i < N; ++i) {
+#endif
 
 		if (!rParticles[i].isSPH || rParticles[i].isPinned || rParticles[i].isBeingDrawn) continue;
 
@@ -17,6 +24,7 @@ void SPH::computeViscCohesionForces(std::vector<ParticlePhysics>& pParticles, st
 		auto neighborCells = getNeighborCells(cellIndex);
 
 		for (auto neighCellIdx : neighborCells) {
+			if (neighCellIdx == kInvalidCell) continue;
 			auto it = grid.find(neighCellIdx);
 			if (it == grid.end()) continue;
 			auto& cell = it->second;
@@ -65,7 +73,12 @@ void SPH::PCISPH(std::vector<ParticlePhysics>& pParticles, std::vector<ParticleR
 
 	size_t N = pParticles.size();
 
-	std::vector<glm::vec2> sphForce(N, { 0.0f, 0.0f });
+	if (sphForce.size() != N) {
+		sphForce.assign(N, { 0.0f, 0.0f });
+	}
+	else {
+		std::fill(sphForce.begin(), sphForce.end(), glm::vec2{ 0.0f, 0.0f });
+	}
 
 	for (size_t i = 0; i < N; ++i) {
 		pParticles[i].press = 0.0f;
@@ -84,66 +97,92 @@ void SPH::PCISPH(std::vector<ParticlePhysics>& pParticles, std::vector<ParticleR
 		//computeViscCohesionForces(pParticles, rParticles, sphForce, N);
 		//sphForce = baseSphForce;
 
+#if defined(EMSCRIPTEN)
+		const int thread_count = clamp_thread_count(N, myVar.isMultiThreadingEnabled ? myVar.threadsAmount : 1);
+		parallel_for(0, N, thread_count, [&](size_t i, int) {
+#else
 #pragma omp parallel for
 		for (size_t i = 0; i < N; ++i) {
+#endif
 
-			if (!rParticles[i].isSPH || rParticles[i].isBeingDrawn) continue;
-
-			auto& p = pParticles[i];
-			p.predVel = p.vel + dt * 1.5f * (sphForce[i] / p.sphMass);
-
-			p.predPos = { p.pos.x + p.predVel.x * dt, p.pos.y + p.predVel.y * dt };
-		}
+			if (rParticles[i].isSPH && !rParticles[i].isBeingDrawn) {
+				auto& p = pParticles[i];
+				p.predVel = p.vel + dt * 1.5f * (sphForce[i] / p.sphMass);
+				p.predPos = { p.pos.x + p.predVel.x * dt, p.pos.y + p.predVel.y * dt };
+			}
+#if defined(EMSCRIPTEN)
+		});
+#endif
 
 		grid.clear();
+		grid.reserve(N);
 		for (size_t i = 0; i < N; ++i) {
 			size_t idx = getGridIndex(pParticles[i].predPos);
 			grid[idx].particleIndices.push_back(i);
 		}
 
+#if defined(EMSCRIPTEN)
+		std::vector<float> thread_max(static_cast<size_t>(thread_count), 0.0f);
+		parallel_for(0, N, thread_count, [&](size_t i, int tid) {
+#else
 #pragma omp parallel for reduction(max:maxRhoErr)
 		for (size_t i = 0; i < N; ++i) {
+#endif
 
-			if (!rParticles[i].isSPH || rParticles[i].isBeingDrawn) continue;
+			if (rParticles[i].isSPH && !rParticles[i].isBeingDrawn) {
+				auto& pi = pParticles[i];
+				pi.predDens = 0.0f;
 
-			auto& pi = pParticles[i];
-			pi.predDens = 0.0f;
+				size_t cellIndex = getGridIndex(pi.predPos);
+				auto neighborCells = getNeighborCells(cellIndex);
 
-			size_t cellIndex = getGridIndex(pi.predPos);
-			auto neighborCells = getNeighborCells(cellIndex);
+				for (auto neighIdx : neighborCells) {
+					if (neighIdx == kInvalidCell) continue;
+					auto it = grid.find(neighIdx);
+					if (it == grid.end()) continue;
+					for (auto pjIdx : it->second.particleIndices) {
 
-			for (auto neighIdx : neighborCells) {
-				auto it = grid.find(neighIdx);
-				if (it == grid.end()) continue;
-				for (auto pjIdx : it->second.particleIndices) {
+						if (!rParticles[pjIdx].isSPH || rParticles[pjIdx].isBeingDrawn) continue;
 
-					if (!rParticles[pjIdx].isSPH || rParticles[pjIdx].isBeingDrawn) continue;
+						auto& pj = pParticles[pjIdx];
+						glm::vec2 dr = { pi.predPos.x - pj.predPos.x,
+									   pi.predPos.y - pj.predPos.y };
+						float   rr = sqrtf(dr.x * dr.x + dr.y * dr.y);
+						if (rr >= radiusMultiplier) continue;
+						float mJ = pj.sphMass * mass;
+						float rho0 = 0.5f * (pi.restDens + pj.restDens);
 
-					auto& pj = pParticles[pjIdx];
-					glm::vec2 dr = { pi.predPos.x - pj.predPos.x,
-								   pi.predPos.y - pj.predPos.y };
-					float   rr = sqrtf(dr.x * dr.x + dr.y * dr.y);
-					if (rr >= radiusMultiplier) continue;
-					float mJ = pj.sphMass * mass;
-					float rho0 = 0.5f * (pi.restDens + pj.restDens);
-
-					pi.predDens += mJ * smoothingKernel(rr, radiusMultiplier) / rho0;
+						pi.predDens += mJ * smoothingKernel(rr, radiusMultiplier) / rho0;
+					}
 				}
+
+				float err = pi.predDens - pi.restDens;
+				pi.pressTmp = delta * err;
+
+				if (pi.pressTmp < 0.0f)
+					pi.pressTmp = 0.0f;
+
+#if defined(EMSCRIPTEN)
+				thread_max[static_cast<size_t>(tid)] = std::max(thread_max[static_cast<size_t>(tid)], std::abs(err));
+#else
+				maxRhoErr = std::max(maxRhoErr, std::abs(err));
+#endif
+
+				pi.press += pi.pressTmp * pi.stiff * stiffMultiplier;
 			}
-
-			float err = pi.predDens - pi.restDens;
-			pi.pressTmp = delta * err;
-
-			if (pi.pressTmp < 0.0f)
-				pi.pressTmp = 0.0f;
-
-			maxRhoErr = std::max(maxRhoErr, std::abs(err));
-
-			pi.press += pi.pressTmp * pi.stiff * stiffMultiplier;
+#if defined(EMSCRIPTEN)
+		});
+		for (float value : thread_max) {
+			maxRhoErr = std::max(maxRhoErr, value);
 		}
+#endif
 
+#if defined(EMSCRIPTEN)
+		for (size_t i = 0; i < N; ++i) {
+#else
 #pragma omp parallel for
 		for (size_t i = 0; i < N; ++i) {
+#endif
 
 			if (!rParticles[i].isSPH || rParticles[i].isBeingDrawn) continue;
 
@@ -152,6 +191,7 @@ void SPH::PCISPH(std::vector<ParticlePhysics>& pParticles, std::vector<ParticleR
 			auto neighborCells = getNeighborCells(cellIndex);
 
 			for (auto neighIdx : neighborCells) {
+				if (neighIdx == kInvalidCell) continue;
 				auto it = grid.find(neighIdx);
 				if (it == grid.end()) continue;
 				for (auto pjIdx : it->second.particleIndices) {
@@ -197,8 +237,12 @@ void SPH::PCISPH(std::vector<ParticlePhysics>& pParticles, std::vector<ParticleR
 
 	} while (iter < maxIter/* && rhoError > densTolerance*/); // I'm keeping that condition commented because I might need it int the future
 
+#if defined(EMSCRIPTEN)
+	parallel_for(0, N, clamp_thread_count(N, myVar.isMultiThreadingEnabled ? myVar.threadsAmount : 1), [&](size_t i, int) {
+#else
 #pragma omp parallel for
 	for (size_t i = 0; i < N; ++i) {
+#endif
 		auto& p = pParticles[i];
 
 		p.pressF = sphForce[i] / p.sphMass;
@@ -209,37 +253,47 @@ void SPH::PCISPH(std::vector<ParticlePhysics>& pParticles, std::vector<ParticleR
 		else {
 			p.acc *= 0.0f;
 		}
-	}
+#if defined(EMSCRIPTEN)
+	});
+#endif
 }
 
 void SPH::groundModeBoundary(std::vector<ParticlePhysics>& pParticles, std::vector<ParticleRendering>& rParticles, glm::vec2 domainSize) {
 
+#if defined(EMSCRIPTEN)
+	const size_t count = pParticles.size();
+	const int thread_count = clamp_thread_count(count, myVar.isMultiThreadingEnabled ? myVar.threadsAmount : 1);
+	parallel_for(0, count, thread_count, [&](size_t i, int) {
+#else
 #pragma omp parallel for
 	for (size_t i = 0; i < pParticles.size(); ++i) {
-		if (rParticles[i].isPinned) continue;
-		auto& p = pParticles[i];
-		p.acc.y += verticalGravity;
+#endif
+		if (!rParticles[i].isPinned) {
+			auto& p = pParticles[i];
+			p.acc.y += verticalGravity;
 
-		// Left wall
-		if (p.pos.x - radiusMultiplier < 0.0f) {
-			p.vel.x *= boundDamping;
-			p.pos.x = radiusMultiplier;
+			// Left wall
+			if (p.pos.x - radiusMultiplier < 0.0f) {
+				p.vel.x *= boundDamping;
+				p.pos.x = radiusMultiplier;
+			}
+			// Right wall
+			if (p.pos.x + radiusMultiplier > domainSize.x) {
+				p.vel.x *= boundDamping;
+				p.pos.x = domainSize.x - radiusMultiplier;
+			}
+			// Bottom wall
+			if (p.pos.y - radiusMultiplier < 0.0f) {
+				p.vel.y *= boundDamping;
+				p.pos.y = radiusMultiplier;
+			}
+			// Top wall
+			if (p.pos.y + radiusMultiplier > domainSize.y) {
+				p.vel.y *= boundDamping;
+				p.pos.y = domainSize.y - radiusMultiplier;
+			}
 		}
-		// Right wall
-		if (p.pos.x + radiusMultiplier > domainSize.x) {
-			p.vel.x *= boundDamping;
-			p.pos.x = domainSize.x - radiusMultiplier;
-		}
-		// Bottom wall
-		if (p.pos.y - radiusMultiplier < 0.0f) {
-			p.vel.y *= boundDamping;
-			p.pos.y = radiusMultiplier;
-		}
-		// Top wall
-		if (p.pos.y + radiusMultiplier > domainSize.y) {
-			p.vel.y *= boundDamping;
-			p.pos.y = domainSize.y - radiusMultiplier;
-		}
-	}
+#if defined(EMSCRIPTEN)
+	});
+#endif
 }
-

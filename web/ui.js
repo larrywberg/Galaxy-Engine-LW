@@ -7,20 +7,41 @@ const html = htm.bind(React.createElement);
 const uiRoot = document.getElementById("ui-root");
 const root = createRoot(uiRoot);
 const STORAGE_KEY = "galaxy-engine-ui-state-v1";
+const DEFAULTS_KEY = "galaxy-engine-ui-defaults-v1";
 const LOCAL_SCENES_KEY = "galaxy-engine-local-scenes-v1";
 const LOCAL_SCENE_PREFIX = "galaxy-engine-local-scene:";
 const LOCAL_SCENE_SCHEMA = "galaxy-engine-scene-ui-v1";
 const LEFT_TABS = ["Visuals", "Physics", "Advanced Stats", "Optics", "Sound", "Recording"];
 
-function loadUiState() {
+function loadUiDefaults() {
   try {
-    const raw = localStorage.getItem(STORAGE_KEY);
+    const raw = localStorage.getItem(DEFAULTS_KEY);
     if (!raw) return null;
     const parsed = JSON.parse(raw);
     if (!parsed || typeof parsed !== "object") return null;
     return parsed;
   } catch (err) {
     return null;
+  }
+}
+
+function saveUiDefaults(state) {
+  try {
+    localStorage.setItem(DEFAULTS_KEY, JSON.stringify(state));
+  } catch (err) {
+    // Ignore storage failures (private mode, quota, etc.)
+  }
+}
+
+function loadUiState() {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY);
+    if (!raw) return loadUiDefaults();
+    const parsed = JSON.parse(raw);
+    if (!parsed || typeof parsed !== "object") return null;
+    return parsed;
+  } catch (err) {
+    return loadUiDefaults();
   }
 }
 
@@ -285,6 +306,18 @@ function useWasmApi() {
         getTargetFps: wrap("web_get_target_fps", "number", []),
         setGravityMultiplier: wrap("web_set_gravity_multiplier", null, ["number"]),
         getGravityMultiplier: wrap("web_get_gravity_multiplier", "number", []),
+        setGravityRampEnabled: wrap("web_set_gravity_ramp_enabled", null, ["number"]),
+        getGravityRampEnabled: wrap("web_get_gravity_ramp_enabled", "number", []),
+        setGravityRampStartMult: wrap("web_set_gravity_ramp_start_mult", null, ["number"]),
+        getGravityRampStartMult: wrap("web_get_gravity_ramp_start_mult", "number", []),
+        setGravityRampSeconds: wrap("web_set_gravity_ramp_seconds", null, ["number"]),
+        getGravityRampSeconds: wrap("web_get_gravity_ramp_seconds", "number", []),
+        setGravityRampTime: wrap("web_set_gravity_ramp_time", null, ["number"]),
+        getGravityRampTime: wrap("web_get_gravity_ramp_time", "number", []),
+        setVelocityDampingEnabled: wrap("web_set_velocity_damping_enabled", null, ["number"]),
+        getVelocityDampingEnabled: wrap("web_get_velocity_damping_enabled", "number", []),
+        setVelocityDampingRate: wrap("web_set_velocity_damping_rate", null, ["number"]),
+        getVelocityDampingRate: wrap("web_get_velocity_damping_rate", "number", []),
         setTimeStepMultiplier: wrap("web_set_time_step_multiplier", null, ["number"]),
         getTimeStepMultiplier: wrap("web_get_time_step_multiplier", "number", []),
         setSymplecticIntegrator: wrap("web_set_symplectic_integrator", null, ["number"]),
@@ -575,6 +608,7 @@ function Panel({ title, children, style, onHover, contentStyle = {}, collapsed =
 
 function Toggle({ label, value, onChange, disabled = false }) {
   const fieldName = toFieldName(label);
+  const isOn = Boolean(value);
   return html`
     <label
       style=${{
@@ -582,7 +616,13 @@ function Toggle({ label, value, onChange, disabled = false }) {
         alignItems: "center",
         gap: 10,
         marginBottom: 10,
-        opacity: disabled ? 0.6 : 1
+        padding: "6px 8px",
+        borderRadius: 8,
+        border: "1px solid rgba(255,255,255,0.08)",
+        background: isOn ? "rgba(96,165,250,0.14)" : "rgba(255,255,255,0.03)",
+        transition: "background 120ms ease, border-color 120ms ease",
+        opacity: disabled ? 0.6 : 1,
+        cursor: disabled ? "not-allowed" : "pointer"
       }}
     >
       <input
@@ -592,6 +632,11 @@ function Toggle({ label, value, onChange, disabled = false }) {
         name=${fieldName}
         onChange=${(e) => onChange(e.target.checked)}
         onKeyDown=${stopPropagation}
+        style=${{
+          width: 18,
+          height: 18,
+          accentColor: isOn ? "#60a5fa" : "#94a3b8"
+        }}
       />
       <span>${label}</span>
     </label>
@@ -607,20 +652,30 @@ function SectionTitle({ children }) {
 }
 
 function Button({ label, onClick, disabled }) {
+  const [flash, setFlash] = useState(false);
+  const handleClick = () => {
+    if (disabled) return;
+    setFlash(true);
+    setTimeout(() => setFlash(false), 160);
+    if (onClick) onClick();
+  };
+  const baseBg = disabled ? "rgba(255,255,255,0.04)" : "rgba(255,255,255,0.08)";
+  const activeBg = "rgba(96,165,250,0.2)";
   return html`
     <button
-      onClick=${onClick}
+      onClick=${handleClick}
       disabled=${disabled}
       style=${{
         width: "100%",
         textAlign: "left",
         padding: "8px 10px",
         marginBottom: 8,
-        background: disabled ? "rgba(255,255,255,0.04)" : "rgba(255,255,255,0.08)",
-        border: "1px solid rgba(255,255,255,0.08)",
+        background: flash ? activeBg : baseBg,
+        border: flash ? "1px solid rgba(96,165,250,0.45)" : "1px solid rgba(255,255,255,0.08)",
         borderRadius: 8,
         color: disabled ? "#6b7785" : "inherit",
-        cursor: disabled ? "not-allowed" : "pointer"
+        cursor: disabled ? "not-allowed" : "pointer",
+        transition: "background 140ms ease, border-color 140ms ease"
       }}
     >
       ${label}
@@ -630,6 +685,19 @@ function Button({ label, onClick, disabled }) {
 
 function Note({ children }) {
   return html`<div style=${{ color: "#6b7785", fontSize: 12, lineHeight: 1.4, marginBottom: 10 }}>${children}</div>`;
+}
+
+function formatSliderValue(value, step, fallbackDecimals = 2) {
+  if (!Number.isFinite(value)) return value;
+  let decimals = fallbackDecimals;
+  if (Number.isFinite(step) && step > 0) {
+    if (step >= 1) {
+      decimals = 0;
+    } else {
+      decimals = Math.min(6, Math.ceil(-Math.log10(step)));
+    }
+  }
+  return value.toFixed(decimals);
 }
 
 function Slider({
@@ -659,7 +727,7 @@ function Slider({
     >
       <div style=${{ display: "flex", justifyContent: "space-between" }}>
         <span>${label}</span>
-        <span style=${{ color: "#9aa4b2" }}>${value.toFixed(2)}</span>
+        <span style=${{ color: "#9aa4b2" }}>${formatSliderValue(value, step)}</span>
       </div>
       <input
         type="range"
@@ -832,6 +900,21 @@ function App() {
     String(storedState.targetFps ?? 144)
   );
   const [gravity, setGravity] = useState(storedState.gravity ?? 1.0);
+  const [gravityRampEnabled, setGravityRampEnabled] = useState(
+    storedState.gravityRampEnabled ?? true
+  );
+  const [gravityRampStartMult, setGravityRampStartMult] = useState(
+    storedState.gravityRampStartMult ?? 0.1
+  );
+  const [gravityRampSeconds, setGravityRampSeconds] = useState(
+    storedState.gravityRampSeconds ?? 20.0
+  );
+  const [velocityDampingEnabled, setVelocityDampingEnabled] = useState(
+    storedState.velocityDampingEnabled ?? true
+  );
+  const [velocityDampingRate, setVelocityDampingRate] = useState(
+    storedState.velocityDampingRate ?? 0.01
+  );
   const [particleSizeMultiplier, setParticleSizeMultiplier] = useState(storedState.particleSizeMultiplier ?? 1.0);
   const [darkMatterEnabled, setDarkMatterEnabled] = useState(storedState.darkMatterEnabled ?? true);
   const [loopingSpaceEnabled, setLoopingSpaceEnabled] = useState(storedState.loopingSpaceEnabled ?? true);
@@ -863,7 +946,7 @@ function App() {
   const [theta, setTheta] = useState(storedState.theta ?? 0.8);
   const [softening, setSoftening] = useState(storedState.softening ?? 2.5);
   const [glowEnabled, setGlowEnabled] = useState(storedState.glowEnabled ?? false);
-  const [threadsAmount, setThreadsAmount] = useState(storedState.threadsAmount ?? 1);
+  const [threadsAmount, setThreadsAmount] = useState(storedState.threadsAmount ?? 4);
   const [domainWidth, setDomainWidth] = useState(storedState.domainWidth ?? 3840);
   const [domainHeight, setDomainHeight] = useState(storedState.domainHeight ?? 2160);
   const [blackHoleInitMass, setBlackHoleInitMass] = useState(storedState.blackHoleInitMass ?? 1.0);
@@ -972,6 +1055,7 @@ function App() {
   const recordingTimerRef = useRef(null);
   const recordingModeRef = useRef(recordingMode);
   const brushCursorBeforeRecordingRef = useRef(null);
+  const brushCursorBeforeLeaveRef = useRef(null);
   const frameCaptureRef = useRef({
     active: false,
     stopping: false,
@@ -987,6 +1071,7 @@ function App() {
   const [selectedSceneId, setSelectedSceneId] = useState(initialScenes[0]?.id ?? "");
   const [sceneName, setSceneName] = useState("");
   const [sceneStorageError, setSceneStorageError] = useState("");
+  const [sceneStorageNotice, setSceneStorageNotice] = useState("");
   const [toolEraser, setToolEraser] = useState(storedState.toolEraser ?? false);
   const [toolRadialForce, setToolRadialForce] = useState(storedState.toolRadialForce ?? false);
   const [toolSpin, setToolSpin] = useState(storedState.toolSpin ?? false);
@@ -1005,6 +1090,7 @@ function App() {
   const [actionChoice, setActionChoice] = useState("");
   const hoverCount = useRef(0);
   const lightingProgress = maxSamples > 0 ? Math.min(lightingSamples / maxSamples, 1) : 0;
+  const [defaultsNotice, setDefaultsNotice] = useState("");
   const saveCanvasSnapshot = async () => {
     const canvas = document.getElementById("canvas");
     if (!canvas) return;
@@ -1030,6 +1116,11 @@ function App() {
     symplecticIntegrator,
     targetFps,
     gravity,
+    gravityRampEnabled,
+    gravityRampStartMult,
+    gravityRampSeconds,
+    velocityDampingEnabled,
+    velocityDampingRate,
     particleSizeMultiplier,
     darkMatterEnabled,
     loopingSpaceEnabled,
@@ -1198,6 +1289,38 @@ function App() {
     setGravity(gravityValue);
     api.setGravityMultiplier(gravityValue);
 
+    const gravityRampEnabledValue = getBool(
+      "gravityRampEnabled",
+      api.getGravityRampEnabled() === 1
+    );
+    setGravityRampEnabled(gravityRampEnabledValue);
+    api.setGravityRampEnabled(gravityRampEnabledValue ? 1 : 0);
+    if (gravityRampEnabledValue) {
+      api.setGravityRampTime(0);
+    }
+
+    const gravityRampStartValue = getNum("gravityRampStartMult", api.getGravityRampStartMult());
+    setGravityRampStartMult(gravityRampStartValue);
+    api.setGravityRampStartMult(gravityRampStartValue);
+
+    const gravityRampSecondsValue = getNum("gravityRampSeconds", api.getGravityRampSeconds());
+    setGravityRampSeconds(gravityRampSecondsValue);
+    api.setGravityRampSeconds(gravityRampSecondsValue);
+
+    const velocityDampingEnabledValue = getBool(
+      "velocityDampingEnabled",
+      api.getVelocityDampingEnabled() === 1
+    );
+    setVelocityDampingEnabled(velocityDampingEnabledValue);
+    api.setVelocityDampingEnabled(velocityDampingEnabledValue ? 1 : 0);
+
+    const velocityDampingRateValue = getNum(
+      "velocityDampingRate",
+      api.getVelocityDampingRate()
+    );
+    setVelocityDampingRate(velocityDampingRateValue);
+    api.setVelocityDampingRate(velocityDampingRateValue);
+
     const particleSizeValue = getNum("particleSizeMultiplier", api.getParticleSizeMultiplier());
     setParticleSizeMultiplier(particleSizeValue);
     api.setParticleSizeMultiplier(particleSizeValue);
@@ -1303,8 +1426,9 @@ function App() {
     api.setGlowEnabled(glowEnabledValue ? 1 : 0);
 
     const threadsAmountValue = getNum("threadsAmount", api.getThreadsAmount());
-    setThreadsAmount(threadsAmountValue);
-    api.setThreadsAmount(threadsAmountValue);
+    const clampedThreadsAmount = Math.min(Math.max(threadsAmountValue, 1), 4);
+    setThreadsAmount(clampedThreadsAmount);
+    api.setThreadsAmount(clampedThreadsAmount);
 
     const domainWidthValue = getNum("domainWidth", api.getDomainWidth());
     setDomainWidth(domainWidthValue);
@@ -1706,9 +1830,11 @@ function App() {
     const Module = window.Module;
     if (!api?.buildSceneJson || !api?.getSceneJsonPtr || !Module?.HEAPU8) {
       setSceneStorageError("Scene save is unavailable in this build.");
+      setSceneStorageNotice("");
       return;
     }
     setSceneStorageError("");
+    setSceneStorageNotice("");
     const now = new Date();
     const id = `scene-${now.getTime()}`;
     const trimmedName = sceneName.trim();
@@ -1736,6 +1862,7 @@ function App() {
     } catch (err) {
       console.warn("Failed to store scene in localStorage.", err);
       setSceneStorageError("Failed to store scene in localStorage (quota?).");
+      setSceneStorageNotice("");
       return;
     }
     const storageSize = new TextEncoder().encode(storageText).length;
@@ -1749,18 +1876,22 @@ function App() {
     persistLocalScenes(nextScenes);
     setSceneName("");
     setSelectedSceneId(id);
+    setSceneStorageNotice("Scene saved to localStorage.");
   };
 
   const loadLocalScene = (id) => {
     if (!id) return;
     if (!api?.loadSceneJson) {
       setSceneStorageError("Scene load is unavailable in this build.");
+      setSceneStorageNotice("");
       return;
     }
     setSceneStorageError("");
+    setSceneStorageNotice("");
     const rawText = localStorage.getItem(`${LOCAL_SCENE_PREFIX}${id}`);
     if (!rawText) {
       setSceneStorageError("Scene data not found.");
+      setSceneStorageNotice("");
       return;
     }
     let sceneText = rawText;
@@ -1779,11 +1910,13 @@ function App() {
     const ok = api.loadSceneJson(sceneText);
     if (!ok) {
       setSceneStorageError("Load failed in the engine.");
+      setSceneStorageNotice("");
       return;
     }
     if (uiState) {
       applyUiStateSnapshot(uiState);
     }
+    setSceneStorageNotice("Scene loaded.");
   };
 
   const deleteLocalScene = (id) => {
@@ -1798,6 +1931,75 @@ function App() {
     if (selectedSceneId === id) {
       setSelectedSceneId(nextScenes[0]?.id ?? "");
     }
+    setSceneStorageNotice("Scene deleted.");
+  };
+
+  const setDefaultsFromScene = (id) => {
+    if (!id) return;
+    const rawText = localStorage.getItem(`${LOCAL_SCENE_PREFIX}${id}`);
+    if (!rawText) {
+      setSceneStorageError("Scene data not found.");
+      setSceneStorageNotice("");
+      return;
+    }
+    try {
+      const parsed = JSON.parse(rawText);
+      if (!parsed || parsed.schema !== LOCAL_SCENE_SCHEMA || typeof parsed.uiState !== "object") {
+        setSceneStorageError("Selected scene has no UI state to use as defaults.");
+        setSceneStorageNotice("");
+        return;
+      }
+      saveUiDefaults(parsed.uiState);
+      applyUiStateSnapshot(parsed.uiState);
+      setSceneStorageError("");
+      setSceneStorageNotice("Defaults updated from selected scene.");
+    } catch (err) {
+      setSceneStorageError("Failed to parse scene defaults.");
+      setSceneStorageNotice("");
+    }
+  };
+
+  const setDefaultsFromCurrent = () => {
+    const snapshot = buildUiStateSnapshot();
+    saveUiDefaults(snapshot);
+    setSceneStorageError("");
+    setSceneStorageNotice("Defaults updated from current UI.");
+  };
+
+  const applySavedDefaults = () => {
+    const defaults = loadUiDefaults();
+    if (!defaults) {
+      setDefaultsNotice("No saved defaults found.");
+      return;
+    }
+    applyUiStateSnapshot(defaults);
+    setDefaultsNotice("Saved defaults applied.");
+  };
+
+  const syncUiFromEngine = () => {
+    applyUiStateSnapshot({});
+    setDefaultsNotice("Synced UI from engine values.");
+  };
+
+  const copySavedDefaults = async () => {
+    const defaults = loadUiDefaults();
+    if (!defaults) {
+      setDefaultsNotice("No saved defaults to copy.");
+      return;
+    }
+    const text = JSON.stringify(defaults, null, 2);
+    try {
+      if (navigator?.clipboard?.writeText) {
+        await navigator.clipboard.writeText(text);
+        setDefaultsNotice("Defaults copied to clipboard.");
+      } else {
+        console.log("Saved defaults:", text);
+        setDefaultsNotice("Clipboard unavailable. Defaults logged to console.");
+      }
+    } catch (err) {
+      console.log("Saved defaults:", text);
+      setDefaultsNotice("Failed to copy. Defaults logged to console.");
+    }
   };
 
   const loadSelectedScene = () => {
@@ -1807,6 +2009,7 @@ function App() {
 
   const resetDefaults = () => {
     localStorage.removeItem(STORAGE_KEY);
+    localStorage.removeItem(DEFAULTS_KEY);
     window.location.reload();
   };
 
@@ -2233,6 +2436,11 @@ function App() {
     symplecticIntegrator,
     targetFps,
     gravity,
+    gravityRampEnabled,
+    gravityRampStartMult,
+    gravityRampSeconds,
+    velocityDampingEnabled,
+    velocityDampingRate,
     particleSizeMultiplier,
     darkMatterEnabled,
     loopingSpaceEnabled,
@@ -2416,6 +2624,38 @@ function App() {
     canvas.addEventListener("contextmenu", handler);
     return () => canvas.removeEventListener("contextmenu", handler);
   }, []);
+
+  useEffect(() => {
+    if (brushCursorBeforeLeaveRef.current !== null) {
+      brushCursorBeforeLeaveRef.current = showBrushCursor;
+    }
+  }, [showBrushCursor]);
+
+  useEffect(() => {
+    const canvas = document.getElementById("canvas");
+    if (!canvas) return;
+    const handleLeave = () => {
+      if (!api) return;
+      if (brushCursorBeforeLeaveRef.current === null) {
+        brushCursorBeforeLeaveRef.current = showBrushCursor;
+      }
+      if (showBrushCursor) {
+        api.setShowBrushCursor(0);
+      }
+    };
+    const handleEnter = () => {
+      if (!api) return;
+      const restore = brushCursorBeforeLeaveRef.current;
+      brushCursorBeforeLeaveRef.current = null;
+      api.setShowBrushCursor((restore ?? showBrushCursor) ? 1 : 0);
+    };
+    canvas.addEventListener("pointerleave", handleLeave);
+    canvas.addEventListener("pointerenter", handleEnter);
+    return () => {
+      canvas.removeEventListener("pointerleave", handleLeave);
+      canvas.removeEventListener("pointerenter", handleEnter);
+    };
+  }, [api, showBrushCursor]);
 
   const actionOptions = useMemo(() => [
     { value: "subdivide_all", label: "Subdivide All", onSelect: () => api?.rcSubdivideAll() },
@@ -3123,11 +3363,11 @@ function App() {
                 <${IntSlider}
                   label="Threads Amount"
                   value=${threadsAmount}
-                  defaultValue=${1}
+                  defaultValue=${4}
                   min=${1}
-                  max=${32}
+                  max=${4}
                   step=${1}
-                  tooltip="Controls the amount of threads used by the simulation. Half your total amount of threads is usually the sweet spot."
+                  tooltip="Controls the amount of threads used by the simulation. Web builds are capped at 4."
                   onChange=${(val) => {
                     setThreadsAmount(val);
                     api?.setThreadsAmount(val);
@@ -3220,6 +3460,67 @@ function App() {
                   onChange=${(val) => {
                     setGravity(val);
                     api?.setGravityMultiplier(val);
+                  }}
+                />
+                <${Toggle}
+                  label="Gravity Ramp"
+                  value=${gravityRampEnabled}
+                  onChange=${(val) => {
+                    setGravityRampEnabled(val);
+                    api?.setGravityRampEnabled(val ? 1 : 0);
+                    if (val) {
+                      api?.setGravityRampTime(0);
+                    }
+                  }}
+                />
+                <${Slider}
+                  label="Gravity Ramp Start"
+                  value=${gravityRampStartMult}
+                  defaultValue=${0.1}
+                  min=${0}
+                  max=${5}
+                  step=${0.01}
+                  disabled=${!gravityRampEnabled}
+                  tooltip="Starting gravity multiplier during ramp."
+                  onChange=${(val) => {
+                    setGravityRampStartMult(val);
+                    api?.setGravityRampStartMult(val);
+                  }}
+                />
+                <${Slider}
+                  label="Gravity Ramp Seconds"
+                  value=${gravityRampSeconds}
+                  defaultValue=${20}
+                  min=${0}
+                  max=${120}
+                  step=${1}
+                  disabled=${!gravityRampEnabled}
+                  tooltip="Seconds to reach full gravity strength."
+                  onChange=${(val) => {
+                    setGravityRampSeconds(val);
+                    api?.setGravityRampSeconds(val);
+                  }}
+                />
+                <${Toggle}
+                  label="Velocity Damping"
+                  value=${velocityDampingEnabled}
+                  onChange=${(val) => {
+                    setVelocityDampingEnabled(val);
+                    api?.setVelocityDampingEnabled(val ? 1 : 0);
+                  }}
+                />
+                <${Slider}
+                  label="Velocity Damping Rate"
+                  value=${velocityDampingRate}
+                  defaultValue=${0.01}
+                  min=${0}
+                  max=${0.1}
+                  step=${0.001}
+                  disabled=${!velocityDampingEnabled}
+                  tooltip="Drag strength per second."
+                  onChange=${(val) => {
+                    setVelocityDampingRate(val);
+                    api?.setVelocityDampingRate(val);
                   }}
                 />
                 <${Slider}
@@ -3999,6 +4300,19 @@ function App() {
                 disabled=${!selectedSceneId}
               />
               <${Button}
+                label="Use Selected Scene as Defaults"
+                onClick=${() => {
+                  setDefaultsFromScene(selectedSceneId);
+                }}
+                disabled=${!selectedSceneId}
+              />
+              <${Button}
+                label="Use Current Settings as Defaults"
+                onClick=${() => {
+                  setDefaultsFromCurrent();
+                }}
+              />
+              <${Button}
                 label="Delete Selected Scene"
                 onClick=${() => {
                   deleteLocalScene(selectedSceneId);
@@ -4007,6 +4321,8 @@ function App() {
               />
               ${sceneStorageError &&
               html`<${Note}>${sceneStorageError}</${Note}>`}
+              ${sceneStorageNotice &&
+              html`<${Note}>${sceneStorageNotice}</${Note}>`}
               <${Note}>Saves optics objects (walls/shapes/lights) only; particles are not stored.</${Note}>
               <${Note}>Stored in browser localStorage and limited by browser storage quotas.</${Note}>
             </${Panel}>
@@ -4107,8 +4423,12 @@ function App() {
               />
               <${Note}>More settings are available in the native UI and will be wired here next.</${Note}>
               <${SectionTitle}>Reset</${SectionTitle}>
-              <${Button} label="Reset Defaults (Reload)" onClick=${resetDefaults} />
-              <${Note}>Clears saved UI settings and reloads the app.</${Note}>
+              <${Button} label="Reload Saved Defaults" onClick=${applySavedDefaults} />
+              <${Button} label="Sync UI from Engine" onClick=${syncUiFromEngine} />
+              <${Button} label="Copy Saved Defaults" onClick=${copySavedDefaults} />
+              <${Button} label="Reset to Code Defaults (Reload)" onClick=${resetDefaults} />
+              ${defaultsNotice && html`<${Note}>${defaultsNotice}</${Note}>`}
+              <${Note}>Reset clears saved UI settings and saved defaults, then reloads.</${Note}>
             </${Panel}>
 
             ${showStats &&

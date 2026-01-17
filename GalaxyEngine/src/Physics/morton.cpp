@@ -42,7 +42,7 @@ void Morton::sortParticlesByMortonKey(
 {
     std::vector<size_t> indices(pParticles.size());
 
-#if !defined(EMSCRIPTEN)
+#if defined(_OPENMP)
 #pragma omp parallel for
 #endif
     for (size_t i = 0; i < indices.size(); i++) {
@@ -64,7 +64,7 @@ void Morton::sortParticlesByMortonKey(
     std::vector<ParticlePhysics> pSorted(pParticles.size());
     std::vector<ParticleRendering> rSorted(rParticles.size());
 
-#if !defined(EMSCRIPTEN)
+#if defined(_OPENMP)
 #pragma omp parallel for
 #endif
     for (size_t i = 0; i < indices.size(); i++) {

@@ -12,6 +12,10 @@ Galaxy Engine uses libraries from the [FFmpeg](https://github.com/FFmpeg/FFmpeg)
 
 The entire UI is made with the help of the [Dear ImGui](https://github.com/ocornut/imgui) library.
 
+## AI Handoff
+
+If you are using Codex or another coding agent, start by reading `AI_STATUS.md` for current build commands and the web vs desktop UI split. `AGENTS.md` points agents at this file on session start.
+
 Special thanks to [Crisosphinx](https://github.com/crisosphinx) for helping me improve my code.
 
 Special thanks to [SergioCelso](https://github.com/SCelso) for making the learning process a little easier and also for helping me implement the initial version of the Barnes-Hut quadtree.

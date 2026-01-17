@@ -3,6 +3,8 @@
 void SaveSystem::saveSystem(const std::string& filename, UpdateVariables& myVar, UpdateParameters& myParam, SPH& sph, Physics& physics, Lighting& lighting, Field& field) {
 
 	YAML::Emitter out;
+	out.SetFloatPrecision(9);
+	out.SetDoublePrecision(17);
 	/*out << YAML::BeginMap;*/
 
 	// ----- Trails -----
@@ -87,6 +89,12 @@ void SaveSystem::saveSystem(const std::string& filename, UpdateVariables& myVar,
 	paramIO(filename, out, "Theta", myVar.theta);
 	paramIO(filename, out, "TimeMult", myVar.timeStepMultiplier);
 	paramIO(filename, out, "GravityMultiplier", myVar.gravityMultiplier);
+	paramIO(filename, out, "GravityRampEnabled", myVar.gravityRampEnabled);
+	paramIO(filename, out, "GravityRampStartMult", myVar.gravityRampStartMult);
+	paramIO(filename, out, "GravityRampSeconds", myVar.gravityRampSeconds);
+	paramIO(filename, out, "GravityRampTime", myVar.gravityRampTime);
+	paramIO(filename, out, "VelocityDampingEnabled", myVar.velocityDampingEnabled);
+	paramIO(filename, out, "VelocityDampingRate", myVar.velocityDampingPerSecond);
 	paramIO(filename, out, "HeavyParticlesMass", myParam.particlesSpawning.heavyParticleWeightMultiplier);
 	paramIO(filename, out, "TemperatureSimulation", myVar.isTempEnabled);
 	paramIO(filename, out, "AmbientTemperature", myVar.ambientTemp);

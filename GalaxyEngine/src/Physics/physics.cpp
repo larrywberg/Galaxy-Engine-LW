@@ -543,6 +543,10 @@ void Physics::mergerSolver(std::vector<ParticlePhysics>& pParticles, std::vector
 
 void Physics::physicsUpdate(std::vector<ParticlePhysics>& pParticles, std::vector<ParticleRendering>& rParticles, UpdateVariables& myVar, bool& sphGround) {
 	const float accelScale = myVar.useSymplecticIntegrator ? 1.0f : 1.5f;
+	float dampingFactor = 1.0f;
+	if (myVar.velocityDampingEnabled && myVar.velocityDampingPerSecond > 0.0f && myVar.timeFactor > 0.0f) {
+		dampingFactor = std::exp(-myVar.velocityDampingPerSecond * myVar.timeFactor);
+	}
 	if (myVar.isPeriodicBoundaryEnabled) {
 
 #pragma omp parallel for schedule(dynamic)
@@ -566,6 +570,8 @@ void Physics::physicsUpdate(std::vector<ParticlePhysics>& pParticles, std::vecto
 					pParticle.vel *= invLen;
 				}
 			}
+
+			pParticle.vel *= dampingFactor;
 
 			pParticle.pos += pParticle.vel * myVar.timeFactor;
 
@@ -604,6 +610,8 @@ void Physics::physicsUpdate(std::vector<ParticlePhysics>& pParticles, std::vecto
 					pParticle.vel *= invLen;
 				}
 			}
+
+			pParticle.vel *= dampingFactor;
 
 			pParticle.pos += pParticle.vel * myVar.timeFactor;
 

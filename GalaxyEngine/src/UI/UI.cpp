@@ -784,6 +784,17 @@ void UI::uiLogic(UpdateParameters& myParam, UpdateVariables& myVar, SPH& sph, Sa
 			sliderHelper("Time Scale", "Controls how fast time passes", myVar.timeStepMultiplier, 0.0f, 15.0f, parametersSliderX, parametersSliderY, enabled);
 			sliderHelper("Softening", "Controls the smoothness of the gravity forces", myVar.softening, 0.5f, 30.0f, parametersSliderX, parametersSliderY, enabled);
 			sliderHelper("Gravity Strength", "Controls how much particles attract eachother", myVar.gravityMultiplier, 0.0f, 100.0f, parametersSliderX, parametersSliderY, enabled);
+			if (buttonHelper("Gravity Ramp", "Gradually increases gravity to let structures expand before collapse", myVar.gravityRampEnabled, 240.0f, 30.0f, true, enabled)) {
+				if (myVar.gravityRampEnabled) {
+					myVar.gravityRampTime = 0.0f;
+				}
+			}
+			bool gravityRampSlidersEnabled = enabled && myVar.gravityRampEnabled;
+			sliderHelper("Gravity Ramp Start", "Starting gravity multiplier during ramp", myVar.gravityRampStartMult, 0.0f, 100.0f, parametersSliderX, parametersSliderY, gravityRampSlidersEnabled);
+			sliderHelper("Gravity Ramp Seconds", "Seconds to reach full gravity strength", myVar.gravityRampSeconds, 0.0f, 120.0f, parametersSliderX, parametersSliderY, gravityRampSlidersEnabled);
+			buttonHelper("Velocity Damping", "Applies gentle drag to help systems settle into orbits", myVar.velocityDampingEnabled, 240.0f, 30.0f, true, enabled);
+			bool velocityDampingSlidersEnabled = enabled && myVar.velocityDampingEnabled;
+			sliderHelper("Velocity Damping Rate", "Drag strength per second", myVar.velocityDampingPerSecond, 0.0f, 0.1f, parametersSliderX, parametersSliderY, velocityDampingSlidersEnabled);
 			sliderHelper("Black Hole Init Mass", "Controls the mass of black holes when spawned", myParam.particlesSpawning.heavyParticleWeightMultiplier, 0.005f, 15.0f, parametersSliderX, parametersSliderY, enabled);
 
 			ImGui::Spacing();
